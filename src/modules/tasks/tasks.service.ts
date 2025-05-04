@@ -16,6 +16,12 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskStatus } from './enums/task-status.enum';
 import { TaskPriority } from './enums/task-priority.enum';
 import { User } from '../users/entities/user.entity';
+import {
+  ITaskStatistics,
+  IPaginatedTasks,
+  IBatchProcessRequest,
+  IBatchProcessResult,
+} from './interfaces/tasks.interface';
 
 @Injectable()
 export class TasksService {
@@ -90,7 +96,7 @@ export class TasksService {
     priority?: string,
     page?: number,
     limit?: number,
-  ) {
+  ): Promise<IPaginatedTasks> {
     try {
       const query = this.tasksRepository
         .createQueryBuilder('task')
@@ -158,7 +164,7 @@ export class TasksService {
    * Returns task statistics using PostgreSQL filters for efficient counting.
    * Optimized to avoid multiple DB round-trips using a single raw query.
    */
-  async getStatistics() {
+  async getStatistics(): Promise<ITaskStatistics> {
     // Use raw SQL aggregation to get counts by status and priority in a single query
     const result = await this.tasksRepository
       .createQueryBuilder('task')
@@ -298,7 +304,7 @@ export class TasksService {
    * Batch processes tasks for common actions like complete/delete.
    * Optimized using `whereInIds` to perform bulk DB operations instead of looping over each task.
    */
-  async batchProcessTasks(operations: { tasks: string[], action: string }) {
+  async batchProcessTasks(operations: IBatchProcessRequest): Promise<IBatchProcessResult[]> {
     const { tasks: taskIds, action } = operations;
 
     if (!taskIds.length) {

@@ -8,6 +8,7 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger'
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { IBatchProcessRequest } from './interfaces/tasks.interface';
 
 @ApiTags('tasks')
 @Controller('tasks')
@@ -64,7 +65,7 @@ export class TasksController {
 
   @Post('batch')
   @ApiOperation({ summary: 'Batch process multiple tasks' })
-  batchProcess(@Body() operations: { tasks: string[], action: string }) {
+  batchProcess(@Body() operations: IBatchProcessRequest) {
     return this.tasksService.batchProcessTasks(operations);
   }
 }

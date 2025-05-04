@@ -5,6 +5,7 @@ import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
+import { IUser, IUserResponse, IUserWithTasks } from './interfaces/users.interface';
 
 @Injectable()
 export class UsersService {
@@ -17,7 +18,7 @@ export class UsersService {
    * Creates a new user with hashed password.
    * Handles password hashing and user creation in a single operation.
    */
-  async create(createUserDto: CreateUserDto): Promise<User> {
+  async create(createUserDto: CreateUserDto): Promise<IUser> {
     try {
       // Hash the password before saving
       const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
@@ -46,7 +47,7 @@ export class UsersService {
    * Retrieves all users from the database.
    * Returns an array of user entities.
    */
-  async findAll(): Promise<User[]> {
+  async findAll(): Promise<IUserResponse[]> {
     try {
       return await this.usersRepository.find();
     } catch (error) {
@@ -65,7 +66,7 @@ export class UsersService {
    * Finds a user by their ID.
    * Throws NotFoundException if user doesn't exist.
    */
-  async findOne(id: string): Promise<User> {
+  async findOne(id: string): Promise<IUser> {
     try {
       const user = await this.usersRepository.findOne({ where: { id } });
       
@@ -94,7 +95,7 @@ export class UsersService {
    * Finds a user by their email address.
    * Returns null if user not found.
    */
-  async findByEmail(email: string): Promise<User | null> {
+  async findByEmail(email: string): Promise<IUser | null> {
     try {
       return await this.usersRepository.findOne({ where: { email } });
     } catch (error) {
@@ -113,7 +114,7 @@ export class UsersService {
    * Updates a user's information.
    * Handles password hashing if password is being updated.
    */
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<IUser> {
     try {
       // Find the user first
       const user = await this.findOne(id);

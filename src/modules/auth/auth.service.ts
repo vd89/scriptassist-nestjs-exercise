@@ -4,6 +4,12 @@ import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import * as bcrypt from 'bcrypt';
+import {
+  ILoginResponse,
+  IRegisterResponse,
+  IJwtPayload,
+  IValidateUserResponse,
+} from './interfaces/auth.interface';
 
 @Injectable()
 export class AuthService {
@@ -16,7 +22,7 @@ export class AuthService {
    * Authenticates a user and returns a JWT token.
    * Validates email and password, throws appropriate exceptions if invalid.
    */
-  async login(loginDto: LoginDto) {
+  async login(loginDto: LoginDto): Promise<ILoginResponse> {
     try {
       const { email, password } = loginDto;
 
@@ -43,7 +49,7 @@ export class AuthService {
       }
 
       // Generate JWT payload
-      const payload = { 
+      const payload: IJwtPayload = { 
         sub: user.id, 
         email: user.email, 
         role: user.role
@@ -73,7 +79,7 @@ export class AuthService {
    * Registers a new user and returns a JWT token.
    * Validates email uniqueness and creates user account.
    */
-  async register(registerDto: RegisterDto) {
+  async register(registerDto: RegisterDto): Promise<IRegisterResponse> {
     try {
       // Check if email already exists
       const existingUser = await this.usersService.findByEmail(registerDto.email);
@@ -117,9 +123,9 @@ export class AuthService {
    * Generates a JWT token for a user.
    * @param userId The ID of the user to generate the token for
    */
-  private generateToken(userId: string) {
+  private generateToken(userId: string): string {
     try {
-      const payload = { sub: userId };
+      const payload: IJwtPayload = { sub: userId };
       return this.jwtService.sign(payload);
     } catch (error) {
       throw new HttpException({
@@ -134,7 +140,7 @@ export class AuthService {
    * Validates a user by their ID.
    * Returns null if user not found.
    */
-  async validateUser(userId: string): Promise<any> {
+  async validateUser(userId: string): Promise<IValidateUserResponse | null> {
     try {
       const user = await this.usersService.findOne(userId);
       
@@ -142,7 +148,12 @@ export class AuthService {
         return null;
       }
       
-      return user;
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      };
     } catch (error) {
       throw new HttpException({
         message: 'Failed to validate user',

@@ -1,15 +1,7 @@
 import { Injectable, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Request } from 'express';
-
-interface LogData {
-  url: string;
-  method: string;
-  ip: string;
-  userAgent: string;
-  error: string;
-  token: string;
-}
+import { ILogData } from '../interfaces/auth.interface';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -19,7 +11,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   /**
    * Creates a base log data object with common request information
    */
-  private createLogData(request: Request, error: string, token: string | undefined): LogData {
+  private createLogData(request: Request, error: string, token: string | undefined): ILogData {
     return {
       url: request.url,
       method: request.method,
