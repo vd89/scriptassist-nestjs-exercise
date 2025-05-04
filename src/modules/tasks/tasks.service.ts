@@ -3,6 +3,7 @@ import {
   NotFoundException,
   HttpException,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
@@ -42,20 +43,31 @@ export class TasksService {
       });
 
       if (!user) {
-        throw new NotFoundException(`User with ID ${createTaskDto.userId} not found`);
+        throw new NotFoundException({
+          message: `User with ID ${createTaskDto.userId} not found`,
+          error: 'User Not Found',
+        });
       }
 
-      // Create and save the new task in the database
-      const task = manager.create(Task, createTaskDto);
-      const savedTask = await manager.save(Task, task);
+      try {
+        // Create and save the new task in the database
+        const task = manager.create(Task, createTaskDto);
+        const savedTask = await manager.save(Task, task);
 
-      // Enqueue background job for task status updates (e.g. notification, audit)
-      await this.taskQueue.add('task-status-update', {
-        taskId: savedTask.id,
-        status: savedTask.status,
-      });
+        // Enqueue background job for task status updates (e.g. notification, audit)
+        await this.taskQueue.add('task-status-update', {
+          taskId: savedTask.id,
+          status: savedTask.status,
+        });
 
-      return savedTask;
+        return savedTask;
+      } catch (error: unknown) {
+        throw new BadRequestException({
+          message: 'Failed to create task',
+          error: 'Task Creation Failed',
+          details: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
     });
   }
 
@@ -79,35 +91,67 @@ export class TasksService {
     page?: number,
     limit?: number,
   ) {
-    const query = this.tasksRepository
-      .createQueryBuilder('task')
-      .leftJoinAndSelect('task.user', 'user'); // Join with user table
+    try {
+      const query = this.tasksRepository
+        .createQueryBuilder('task')
+        .leftJoinAndSelect('task.user', 'user'); // Join with user table
 
-    // Apply status filter if provided
-    if (status) {
-      query.andWhere('task.status = :status', { status });
+      // Apply status filter if provided
+      if (status) {
+        if (!Object.values(TaskStatus).includes(status as TaskStatus)) {
+          throw new BadRequestException({
+            message: `Invalid status value: ${status}`,
+            error: 'Invalid Status',
+            validStatuses: Object.values(TaskStatus),
+          });
+        }
+        query.andWhere('task.status = :status', { status });
+      }
+
+      // Apply priority filter if provided
+      if (priority) {
+        if (!Object.values(TaskPriority).includes(priority as TaskPriority)) {
+          throw new BadRequestException({
+            message: `Invalid priority value: ${priority}`,
+            error: 'Invalid Priority',
+            validPriorities: Object.values(TaskPriority),
+          });
+        }
+        query.andWhere('task.priority = :priority', { priority });
+      }
+
+      // Set pagination defaults and apply skip/take
+      page = Number(page) || 1;
+      limit = Number(limit) || 10;
+
+      if (page < 1 || limit < 1) {
+        throw new BadRequestException({
+          message: 'Page and limit must be positive numbers',
+          error: 'Invalid Pagination Parameters',
+        });
+      }
+
+      query.skip((page - 1) * limit).take(limit);
+
+      // Execute query and get both data and count in one go
+      const [data, count] = await query.getManyAndCount();
+
+      return {
+        data,
+        count,
+        page,
+        limit,
+      };
+    } catch (error: unknown) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException({
+        message: 'Failed to fetch tasks',
+        error: 'Task Fetch Failed',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      }, HttpStatus.INTERNAL_SERVER_ERROR);
     }
-
-    // Apply priority filter if provided
-    if (priority) {
-      query.andWhere('task.priority = :priority', { priority });
-    }
-
-    // Set pagination defaults and apply skip/take
-    page = Number(page) || 1;
-    limit = Number(limit) || 10;
-
-    query.skip((page - 1) * limit).take(limit);
-
-    // Execute query and get both data and count in one go
-    const [data, count] = await query.getManyAndCount();
-
-    return {
-      data,
-      count,
-      page,
-      limit,
-    };
   }
 
   /**
@@ -141,17 +185,31 @@ export class TasksService {
    * Returns a single task by ID with its related user.
    */
   async findOne(id: string): Promise<Task> {
-    // Lookup task by ID including its related user
-    const task = await this.tasksRepository.findOne({
-      where: { id },
-      relations: ['user'],
-    });
+    try {
+      // Lookup task by ID including its related user
+      const task = await this.tasksRepository.findOne({
+        where: { id },
+        relations: ['user'],
+      });
 
-    if (!task) {
-      throw new NotFoundException(`Task with ID ${id} not found`);
+      if (!task) {
+        throw new NotFoundException({
+          message: `Task with ID ${id} not found`,
+          error: 'Task Not Found',
+        });
+      }
+
+      return task;
+    } catch (error: unknown) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException({
+        message: 'Failed to fetch task',
+        error: 'Task Fetch Failed',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      }, HttpStatus.INTERNAL_SERVER_ERROR);
     }
-
-    return task;
   }
 
   /**
@@ -160,33 +218,47 @@ export class TasksService {
    */
   async update(id: string, updateTaskDto: UpdateTaskDto): Promise<Task> {
     return await this.dataSource.transaction(async manager => {
-      // Retrieve the task and its user relation
-      const task = await manager.findOne(Task, {
-        where: { id },
-        relations: ['user'],
-      });
-
-      if (!task) {
-        throw new NotFoundException(`Task with ID ${id} not found`);
-      }
-
-      const originalStatus = task.status;
-
-      // Apply updates to the task
-      Object.assign(task, updateTaskDto);
-
-      // Save the updated task
-      const updatedTask = await manager.save(Task, task);
-
-      // If the status changed, enqueue a job to handle status update
-      if (originalStatus !== updatedTask.status) {
-        await this.taskQueue.add('task-status-update', {
-          taskId: updatedTask.id,
-          status: updatedTask.status,
+      try {
+        // Retrieve the task and its user relation
+        const task = await manager.findOne(Task, {
+          where: { id },
+          relations: ['user'],
         });
-      }
 
-      return updatedTask;
+        if (!task) {
+          throw new NotFoundException({
+            message: `Task with ID ${id} not found`,
+            error: 'Task Not Found',
+          });
+        }
+
+        const originalStatus = task.status;
+
+        // Apply updates to the task
+        Object.assign(task, updateTaskDto);
+
+        // Save the updated task
+        const updatedTask = await manager.save(Task, task);
+
+        // If the status changed, enqueue a job to handle status update
+        if (originalStatus !== updatedTask.status) {
+          await this.taskQueue.add('task-status-update', {
+            taskId: updatedTask.id,
+            status: updatedTask.status,
+          });
+        }
+
+        return updatedTask;
+      } catch (error: unknown) {
+        if (error instanceof HttpException) {
+          throw error;
+        }
+        throw new HttpException({
+          message: 'Failed to update task',
+          error: 'Task Update Failed',
+          details: error instanceof Error ? error.message : 'Unknown error',
+        }, HttpStatus.INTERNAL_SERVER_ERROR);
+      }
     });
   }
 
@@ -195,17 +267,31 @@ export class TasksService {
    * Throws error if task does not exist.
    */
   async remove(id: string): Promise<{ message: string }> {
-    // Check if task exists before deletion
-    const task = await this.tasksRepository.findOne({ where: { id } });
+    try {
+      // Check if task exists before deletion
+      const task = await this.tasksRepository.findOne({ where: { id } });
 
-    if (!task) {
-      throw new NotFoundException(`Task with ID ${id} not found`);
+      if (!task) {
+        throw new NotFoundException({
+          message: `Task with ID ${id} not found`,
+          error: 'Task Not Found',
+        });
+      }
+
+      // Remove task from the database
+      await this.tasksRepository.remove(task);
+
+      return { message: `Task with ID ${id} has been successfully deleted.` };
+    } catch (error: unknown) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException({
+        message: 'Failed to delete task',
+        error: 'Task Deletion Failed',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      }, HttpStatus.INTERNAL_SERVER_ERROR);
     }
-
-    // Remove task from the database
-    await this.tasksRepository.remove(task);
-
-    return { message: `Task with ID ${id} has been successfully deleted.` };
   }
 
   /**
@@ -215,7 +301,12 @@ export class TasksService {
   async batchProcessTasks(operations: { tasks: string[], action: string }) {
     const { tasks: taskIds, action } = operations;
 
-    if (!taskIds.length) return [];
+    if (!taskIds.length) {
+      throw new BadRequestException({
+        message: 'No task IDs provided',
+        error: 'Invalid Batch Operation',
+      });
+    }
 
     try {
       switch (action) {
@@ -252,10 +343,16 @@ export class TasksService {
         }
 
         default:
-          throw new HttpException(`Unknown action: ${action}`, HttpStatus.BAD_REQUEST);
+          throw new BadRequestException({
+            message: `Unknown action: ${action}`,
+            error: 'Invalid Action',
+            validActions: ['complete', 'delete'],
+          });
       }
-    } catch (error) {
-      // Ensure consistent structure even when errors occur
+    } catch (error: unknown) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
       return taskIds.map(taskId => ({
         taskId,
         success: false,
@@ -269,16 +366,38 @@ export class TasksService {
    * Simple, single-purpose method for more granular control.
    */
   async updateStatus(id: string, status: string): Promise<Task> {
-    // Find task by ID
-    const task = await this.tasksRepository.findOneBy({ id });
+    try {
+      if (!Object.values(TaskStatus).includes(status as TaskStatus)) {
+        throw new BadRequestException({
+          message: `Invalid status value: ${status}`,
+          error: 'Invalid Status',
+          validStatuses: Object.values(TaskStatus),
+        });
+      }
 
-    if (!task) {
-      throw new NotFoundException(`Task with ID ${id} not found`);
+      // Find task by ID
+      const task = await this.tasksRepository.findOneBy({ id });
+
+      if (!task) {
+        throw new NotFoundException({
+          message: `Task with ID ${id} not found`,
+          error: 'Task Not Found',
+        });
+      }
+
+      // Update status and save
+      task.status = status as TaskStatus;
+      return this.tasksRepository.save(task);
+    } catch (error: unknown) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException({
+        message: 'Failed to update task status',
+        error: 'Status Update Failed',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      }, HttpStatus.INTERNAL_SERVER_ERROR);
     }
-
-    // Update status and save
-    task.status = status as TaskStatus;
-    return this.tasksRepository.save(task);
   }
 
   /**
@@ -286,10 +405,29 @@ export class TasksService {
    * Includes user relation for context.
    */
   async findByStatus(status: TaskStatus): Promise<Task[]> {
-    // Return tasks that match a specific status along with the user
-    return this.tasksRepository.find({
-      where: { status },
-      relations: ['user'],
-    });
+    try {
+      if (!Object.values(TaskStatus).includes(status)) {
+        throw new BadRequestException({
+          message: `Invalid status value: ${status}`,
+          error: 'Invalid Status',
+          validStatuses: Object.values(TaskStatus),
+        });
+      }
+
+      // Return tasks that match a specific status along with the user
+      return this.tasksRepository.find({
+        where: { status },
+        relations: ['user'],
+      });
+    } catch (error: unknown) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException({
+        message: 'Failed to fetch tasks by status',
+        error: 'Task Fetch Failed',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      }, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 }
