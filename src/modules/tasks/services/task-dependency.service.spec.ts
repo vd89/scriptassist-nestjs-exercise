@@ -7,7 +7,6 @@ import { Task } from '../entities/task.entity';
 import { TaskHistory } from '../entities/task-history.entity';
 import { TaskHistoryAction } from '../enums/task-history-action.enum';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
-import { DependencyType } from '../enums/dependency-type.enum';
 
 describe('TaskDependencyService', () => {
   let service: TaskDependencyService;
@@ -105,6 +104,8 @@ describe('TaskDependencyService', () => {
         mockDependency as TaskDependency,
       );
       (taskHistoryRepository.create as jest.Mock).mockReturnValue(mockHistory as TaskHistory);
+      // Mock find to return empty array (no circular dependency)
+      (taskDependencyRepository.find as jest.Mock).mockResolvedValue([]);
 
       const result = await service.create('1', createDependencyDto);
 
@@ -136,11 +137,15 @@ describe('TaskDependencyService', () => {
       };
 
       (taskRepository.findOne as jest.Mock).mockResolvedValue(mockTask as Task);
+      // Mock existing dependency
       (taskDependencyRepository.findOne as jest.Mock).mockResolvedValue(
         mockDependency as TaskDependency,
       );
+      // Mock find to return empty array (no circular dependency)
+      (taskDependencyRepository.find as jest.Mock).mockResolvedValue([]);
 
       await expect(service.create('1', createDependencyDto)).rejects.toThrow(BadRequestException);
+      await expect(service.create('1', createDependencyDto)).rejects.toThrow('Dependency already exists');
     });
   });
 

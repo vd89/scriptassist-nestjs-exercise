@@ -143,7 +143,10 @@ export class AuthService {
         access_token: newAccessToken,
         refresh_token: newRefreshToken,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error; // Re-throw the specific UnauthorizedException
+      }
       throw new UnauthorizedException('Invalid refresh token');
     }
   }

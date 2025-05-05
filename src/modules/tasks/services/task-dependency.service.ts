@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TaskDependency } from '../entities/task-dependency.entity';
 import { Task } from '../entities/task.entity';
+import { TaskHistory } from '../entities/task-history.entity';
+import { TaskHistoryAction } from '../enums/task-history-action.enum';
 import { CreateDependencyDto } from '../dto/create-dependency.dto';
 
 @Injectable()
@@ -12,6 +14,8 @@ export class TaskDependencyService {
     private dependencyRepository: Repository<TaskDependency>,
     @InjectRepository(Task)
     private taskRepository: Repository<Task>,
+    @InjectRepository(TaskHistory)
+    private historyRepository: Repository<TaskHistory>,
   ) {}
 
   async create(taskId: string, createDependencyDto: CreateDependencyDto): Promise<TaskDependency> {
@@ -27,6 +31,19 @@ export class TaskDependencyService {
       throw new NotFoundException('Task not found');
     }
 
+    // Check if dependency already exists
+    const existingDependency = await this.dependencyRepository.findOne({
+      where: {
+        taskId,
+        dependentTaskId,
+        type,
+      },
+    });
+
+    if (existingDependency) {
+      throw new BadRequestException('Dependency already exists');
+    }
+
     // Check for circular dependencies
     if (await this.wouldCreateCircularDependency(taskId, dependentTaskId)) {
       throw new BadRequestException('Circular dependency detected');
@@ -38,7 +55,20 @@ export class TaskDependencyService {
       type,
     });
 
-    return this.dependencyRepository.save(dependency);
+    const savedDependency = await this.dependencyRepository.save(dependency);
+
+    // Create history entry
+    const historyEntry = this.historyRepository.create({
+      taskId,
+      userId: task.userId, // Assuming task has userId property
+      action: TaskHistoryAction.DEPENDENCY_ADDED,
+      newValue: { dependentTaskId, type },
+      description: `Added ${type} dependency to task ${dependentTaskId}`,
+    });
+
+    await this.historyRepository.save(historyEntry);
+
+    return savedDependency;
   }
 
   async findAll(taskId: string): Promise<TaskDependency[]> {
