@@ -10,18 +10,15 @@ import {
   Query,
   HttpException,
   HttpStatus,
-  UseInterceptors,
   HttpCode,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags, ApiResponse } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags, ApiResponse } from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Task } from './entities/task.entity';
-import { TaskStatus } from './enums/task-status.enum';
-import { TaskPriority } from './enums/task-priority.enum';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -36,7 +33,7 @@ import { BatchProcessDto } from './dto/batch-process.dto';
 @ApiTags('tasks')
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard, RateLimitGuard)
-@RateLimit({ limit: 100, windowMs: 60000 })
+@RateLimit({ points: 100, duration: 60000 })
 @ApiBearerAuth()
 export class TasksController {
   constructor(

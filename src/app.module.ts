@@ -53,9 +53,7 @@ import { CacheService } from './common/services/cache.service';
 
     // Rate limiting
     ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => [
+      useFactory: () => [
         {
           ttl: 60,
           limit: 10,

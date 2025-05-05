@@ -48,7 +48,7 @@ export class TaskCategoryService {
 
   async addTaskToCategory(categoryId: string, taskId: string): Promise<TaskCategory> {
     const category = await this.findOne(categoryId);
-    const task = await this.categoryRepository
+    await this.categoryRepository
       .createQueryBuilder('category')
       .relation(TaskCategory, 'tasks')
       .of(category)

@@ -3,7 +3,6 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
-  Logger,
   Inject,
   HttpException,
   HttpStatus,

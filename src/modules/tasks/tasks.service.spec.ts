@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { TasksService } from './tasks.service';
 import { Task } from './entities/task.entity';
 import { TaskStatus } from './enums/task-status.enum';
@@ -12,20 +11,20 @@ import { CreateTaskDto } from './dto/create-task.dto';
 
 describe('TasksService', () => {
   let service: TasksService;
-  let taskRepository: Repository<Task>;
+  // let taskRepository: Repository<Task>;
   let taskQueue: Queue;
 
-  const mockTask = {
-    id: '1',
-    title: 'Test Task',
-    description: 'Test Description',
-    status: TaskStatus.PENDING,
-    priority: TaskPriority.MEDIUM,
-    dueDate: new Date().toISOString(),
-    userId: 'user1',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  // const mockTask = {
+  //   id: '1',
+  //   title: 'Test Task',
+  //   description: 'Test Description',
+  //   status: TaskStatus.PENDING,
+  //   priority: TaskPriority.MEDIUM,
+  //   dueDate: new Date().toISOString(),
+  //   userId: 'user1',
+  //   createdAt: new Date(),
+  //   updatedAt: new Date(),
+  // };
 
   const mockTaskRepository = {
     create: jest.fn(),
@@ -68,7 +67,7 @@ describe('TasksService', () => {
     }).compile();
 
     service = module.get<TasksService>(TasksService);
-    taskRepository = module.get<Repository<Task>>(getRepositoryToken(Task));
+    // taskRepository = module.get<Repository<Task>>(getRepositoryToken(Task));
     taskQueue = module.get('BullQueue_task-processing');
   });
 

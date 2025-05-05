@@ -1,14 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { TaskCategoryService } from './task-category.service';
 import { TaskCategory } from '../entities/task-category.entity';
-import { Task } from '../entities/task.entity';
 import { NotFoundException } from '@nestjs/common';
 
 describe('TaskCategoryService', () => {
   let service: TaskCategoryService;
-  let categoryRepository: Repository<TaskCategory>;
 
   const mockCategory = {
     id: '1',
@@ -16,18 +13,6 @@ describe('TaskCategoryService', () => {
     description: 'Test Description',
     color: '#FF5733',
     tasks: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-
-  const mockTask = {
-    id: '1',
-    title: 'Test Task',
-    description: 'Test Description',
-    status: 'PENDING',
-    priority: 'MEDIUM',
-    dueDate: new Date(),
-    userId: 'user1',
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -58,7 +43,6 @@ describe('TaskCategoryService', () => {
     }).compile();
 
     service = module.get<TaskCategoryService>(TaskCategoryService);
-    categoryRepository = module.get<Repository<TaskCategory>>(getRepositoryToken(TaskCategory));
   });
 
   afterEach(() => {

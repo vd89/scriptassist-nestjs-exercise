@@ -86,7 +86,7 @@ export class TaskProcessorService extends WorkerHost {
     }
   }
 
-  private async handleOverdueTasks(job: Job) {
+  private async handleOverdueTasks(_: Job) {
     this.logger.debug('Processing overdue tasks notification');
 
     try {

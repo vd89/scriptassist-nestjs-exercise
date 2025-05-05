@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+// import { Repository } from 'typeorm';
 import { TaskHistoryService } from './task-history.service';
 import { TaskHistory } from '../entities/task-history.entity';
 import { Task } from '../entities/task.entity';
@@ -9,8 +9,6 @@ import { TaskHistoryAction } from '../enums/task-history-action.enum';
 
 describe('TaskHistoryService', () => {
   let service: TaskHistoryService;
-  let historyRepository: Repository<TaskHistory>;
-  let taskRepository: Repository<Task>;
 
   const mockTask = {
     id: '1',
@@ -69,8 +67,8 @@ describe('TaskHistoryService', () => {
     }).compile();
 
     service = module.get<TaskHistoryService>(TaskHistoryService);
-    historyRepository = module.get<Repository<TaskHistory>>(getRepositoryToken(TaskHistory));
-    taskRepository = module.get<Repository<Task>>(getRepositoryToken(Task));
+    // historyRepository = module.get<Repository<TaskHistory>>(getRepositoryToken(TaskHistory));
+    // taskRepository = module.get<Repository<Task>>(getRepositoryToken(Task));
   });
 
   afterEach(() => {
