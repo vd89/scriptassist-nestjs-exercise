@@ -5,6 +5,7 @@ import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import * as bcrypt from 'bcrypt';
+import { QueryFailedError } from 'typeorm';
 
 interface TokenPayload {
   sub: string;
@@ -92,7 +93,18 @@ export class AuthService {
       if (error instanceof ConflictException) {
         throw error;
       }
-      throw new ConflictException('Email already exists');
+
+      // Handle TypeORM unique constraint violation
+      if (error instanceof QueryFailedError) {
+        const queryError = error as any;
+        if (queryError.code === '23505') {
+          // PostgreSQL unique violation code
+          throw new ConflictException('Email already exists');
+        }
+      }
+
+      // Re-throw other errors
+      throw error;
     }
   }
 
