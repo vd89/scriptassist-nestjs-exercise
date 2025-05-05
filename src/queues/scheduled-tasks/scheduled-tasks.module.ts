@@ -9,9 +9,7 @@ import { Task } from '../../modules/tasks/entities/task.entity';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-    BullModule.registerQueue({
-      name: 'task-processing',
-    }),
+    BullModule.registerQueue({ name: 'task-processing' }, { name: 'overdue-tasks-dead-letter' }),
     TypeOrmModule.forFeature([Task]),
     TasksModule,
   ],
