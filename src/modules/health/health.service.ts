@@ -11,6 +11,7 @@ import {
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { RedisHealthIndicator } from './indicators/redis.health';
+import * as os from 'os';
 
 @Injectable()
 export class HealthService {
@@ -28,6 +29,7 @@ export class HealthService {
    * Perform a complete health check of all system components
    */
   async check(): Promise<HealthCheckResult> {
+    const diskPath = os.platform() === 'win32' ? 'C:\\' : '/';
     const checks: HealthIndicatorFunction[] = [
       // Database connection check
       async () =>
@@ -45,8 +47,8 @@ export class HealthService {
       // Disk storage check (ensure at least 500MB free)
       async () =>
         this.diskHealthIndicator.checkStorage('disk', {
-          thresholdPercent: 0.75,
-          path: '/',
+          thresholdPercent: 0.9,
+          path: diskPath,
         }),
     ];
 

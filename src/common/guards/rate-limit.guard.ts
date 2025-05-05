@@ -33,10 +33,22 @@ export class RateLimitGuard implements CanActivate {
     });
 
     // Set up error handling for Redis
-    this.redisClient.on('error', err => {
-      // Consider using a proper logger instead of console.error in production
-      console.error('Redis error:', err);
-    });
+    this.redisClient.on(
+      'error',
+      (err: Error & { code?: string; address?: string; port?: number }) => {
+        if (err.code === 'ECONNREFUSED') {
+          // Log a concise, user-friendly warning and degrade gracefully
+          // eslint-disable-next-line no-console
+          console.warn(
+            `Redis connection refused at ${err.address}:${err.port}. Rate limiting is running in degraded (in-memory) mode. Please ensure Redis is running and accessible.`,
+          );
+        } else {
+          // eslint-disable-next-line no-console
+          console.error('Redis error:', err.message);
+        }
+        // Do not throw or crash the app
+      },
+    );
 
     // Create an insurance limiter (in-memory fallback)
     // Use defaults matching the most common rate limit expected, or make configurable

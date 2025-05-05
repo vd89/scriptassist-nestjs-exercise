@@ -10,5 +10,6 @@ import { HealthService } from './health.service';
   imports: [TerminusModule, HttpModule, TypeOrmModule],
   controllers: [HealthController],
   providers: [HealthService, RedisHealthIndicator],
+  exports: [HealthService],
 })
 export class HealthModule {}
