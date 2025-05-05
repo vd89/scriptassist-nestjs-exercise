@@ -2,6 +2,20 @@ import { ApiProperty } from '@nestjs/swagger';
 import { TaskStatus } from '../enums/task-status.enum';
 import { TaskPriority } from '../enums/task-priority.enum';
 
+class UserResponseDto {
+  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
+  id: string;
+
+  @ApiProperty({ example: 'john.doe@example.com' })
+  email: string;
+
+  @ApiProperty({ example: 'John Doe' })
+  name: string;
+
+  @ApiProperty({ example: 'user' })
+  role: string;
+}
+
 export class TaskResponseDto {
   @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
   id: string;
@@ -21,12 +35,12 @@ export class TaskResponseDto {
   @ApiProperty({ example: '2023-12-31T23:59:59Z' })
   dueDate: Date;
 
-  @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
-  userId: string;
+  @ApiProperty({ type: UserResponseDto })
+  user: UserResponseDto;
 
   @ApiProperty({ example: '2023-01-01T00:00:00.000Z' })
   createdAt: Date;
 
   @ApiProperty({ example: '2023-01-01T00:00:00.000Z' })
   updatedAt: Date;
-} 
+}

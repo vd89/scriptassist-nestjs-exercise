@@ -1,5 +1,13 @@
-import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
-import { User } from '../../users/entities/user.entity';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  OneToMany,
+} from 'typeorm';
 import { TaskStatus } from '../enums/task-status.enum';
 import { TaskPriority } from '../enums/task-priority.enum';
 
@@ -28,19 +36,34 @@ export class Task {
   })
   priority: TaskPriority;
 
-  @Column({ name: 'due_date', nullable: true })
+  @Column({ type: 'timestamp', nullable: true, name: 'due_date' })
   dueDate: Date;
 
   @Column({ name: 'user_id' })
   userId: string;
 
-  @ManyToOne(() => User, (user) => user.tasks)
-  @JoinColumn({ name: 'user_id' })
-  user: User;
-
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn()
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn()
   updatedAt: Date;
-} 
+
+  @ManyToOne('User', { onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'user_id' })
+  user: any;
+
+  @OneToMany('TaskComment', 'task')
+  comments: any[];
+
+  @OneToMany('TaskAttachment', 'task')
+  attachments: any[];
+
+  @OneToMany('TaskHistory', 'task')
+  history: any[];
+
+  @OneToMany('TaskDependency', 'task')
+  dependencies: any[];
+
+  @OneToMany('TaskDependency', 'dependentTask')
+  dependentTasks: any[];
+}
