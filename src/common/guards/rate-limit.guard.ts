@@ -1,21 +1,18 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  HttpException,
-  HttpStatus,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { ConfigService } from '@nestjs/config';
 import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 import Redis from 'ioredis';
 import { Request } from 'express';
-import { RATE_LIMIT_KEY } from '../decorators/rate-limit.decorator';
+import { RATE_LIMIT_KEY, RateLimitOptions } from '../decorators/rate-limit.decorator';
+import { RateLimitException } from '../exceptions/rate-limit.exception';
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   private rateLimiter: RateLimiterRedis;
+  private readonly defaultPoints = 100;
+  private readonly defaultDuration = 60;
 
   constructor(
     private reflector: Reflector,
@@ -37,14 +34,14 @@ export class RateLimitGuard implements CanActivate {
     this.rateLimiter = new RateLimiterRedis({
       storeClient: redisClient,
       keyPrefix: 'ratelimit',
-      points: 100, // Default max requests per minute
-      duration: 60, // 1 minute in seconds
+      points: this.defaultPoints, // Default max requests per minute
+      duration: this.defaultDuration, // 1 minute in seconds
       blockDuration: 60, // Block for 1 minute when exceeding limit
       inmemoryBlockOnConsumed: 101, // Block on 101st request in memory if Redis is down
       inmemoryBlockDuration: 60,
       insuranceLimiter: {
-        points: 100, // Fallback points
-        duration: 60, // Fallback duration
+        points: this.defaultPoints, // Fallback points
+        duration: this.defaultDuration, // Fallback duration
       },
     });
   }
@@ -53,51 +50,37 @@ export class RateLimitGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
 
     // Get custom rate limit settings if provided via decorator
-    const rateLimit = this.reflector.get<{ points: number; duration: number }>(
+    const rateLimitOptions = this.reflector.get<RateLimitOptions>(
       RATE_LIMIT_KEY,
       context.getHandler(),
     );
 
-    const points = rateLimit?.points || 100;
-    const duration = rateLimit?.duration || 60;
+    // Extract points and duration from options or use defaults
+    const points = rateLimitOptions?.points || this.defaultPoints;
+    const duration = rateLimitOptions?.duration || this.defaultDuration;
 
     // Create a unique key for each client
     // Consider both IP address and user ID if authenticated
     const userId = (request.user as any)?.id || '';
     const key = userId ? `${userId}_${this.getClientIp(request)}` : this.getClientIp(request);
 
-    return this.handleRateLimit(key, points, duration, request);
+    return this.handleRateLimit(key, points, duration);
   }
 
-  private async handleRateLimit(
-    key: string,
-    points: number,
-    duration: number,
-    request: Request,
-  ): Promise<boolean> {
+  private async handleRateLimit(key: string, points: number, duration: number): Promise<boolean> {
     try {
       await this.rateLimiter.consume(key, 1);
       return true;
     } catch (rateLimiterRes) {
       if (rateLimiterRes instanceof RateLimiterRes) {
         const retryAfter = Math.round(rateLimiterRes.msBeforeNext / 1000) || 1;
+        const resetTime = Math.round(Date.now() / 1000) + retryAfter;
 
-        throw new HttpException(
-          {
-            statusCode: HttpStatus.TOO_MANY_REQUESTS,
-            error: 'Too Many Requests',
-            message: 'Rate limit exceeded',
-            retryAfter, // Seconds until the client can retry
-          },
-          HttpStatus.TOO_MANY_REQUESTS,
-          {
-            headers: {
-              'Retry-After': `${retryAfter}`, // RFC 7231 compliant header
-              'X-RateLimit-Limit': `${points}`, // Maximum allowed requests
-              'X-RateLimit-Remaining': `0`, // Number of remaining requests
-              'X-RateLimit-Reset': `${Math.round(Date.now() / 1000) + retryAfter}`, // Timestamp when client can retry
-            },
-          },
+        throw new RateLimitException(
+          retryAfter,
+          points,
+          0, // Remaining requests
+          resetTime,
         );
       }
 

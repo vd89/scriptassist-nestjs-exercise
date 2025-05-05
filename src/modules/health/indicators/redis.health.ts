@@ -25,8 +25,9 @@ export class RedisHealthIndicator extends HealthIndicator {
       const latency = Date.now() - start;
 
       return this.getStatus(key, true, { latency: `${latency}ms` });
-    } catch (error) {
-      return this.getStatus(key, false, { message: error.message });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown Redis error';
+      return this.getStatus(key, false, { message: errorMessage });
     }
   }
 
