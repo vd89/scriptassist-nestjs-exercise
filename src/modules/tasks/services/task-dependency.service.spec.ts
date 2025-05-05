@@ -145,7 +145,9 @@ describe('TaskDependencyService', () => {
       (taskDependencyRepository.find as jest.Mock).mockResolvedValue([]);
 
       await expect(service.create('1', createDependencyDto)).rejects.toThrow(BadRequestException);
-      await expect(service.create('1', createDependencyDto)).rejects.toThrow('Dependency already exists');
+      await expect(service.create('1', createDependencyDto)).rejects.toThrow(
+        'Dependency already exists',
+      );
     });
   });
 
