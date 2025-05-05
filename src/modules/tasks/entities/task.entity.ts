@@ -11,6 +11,15 @@ import {
 import { TaskStatus } from '../enums/task-status.enum';
 import { TaskPriority } from '../enums/task-priority.enum';
 
+/**
+ * Entity representing a task in the system.
+ *
+ * This entity stores all information related to a task including its title,
+ * description, status, priority, due date, and relationship with other entities.
+ *
+ * @entity Task
+ * @table tasks
+ */
 @Entity('tasks')
 export class Task {
   @PrimaryGeneratedColumn('uuid')
