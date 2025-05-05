@@ -1,3 +1,14 @@
+/**
+ * Migration: FixTaskUserIdNullValues1710752400001
+ *
+ * This migration fixes null user_id values in the tasks table by:
+ * - Making the user_id column nullable
+ * - Updating null user_id values with the first admin user's ID
+ * - Making the user_id column non-nullable again
+ *
+ * Rollback: Reverses the changes by making the user_id column non-nullable again.
+ */
+
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class FixTaskUserIdNullValues1710752400001 implements MigrationInterface {
@@ -32,7 +43,10 @@ export class FixTaskUserIdNullValues1710752400001 implements MigrationInterface 
     `);
   }
 
-  public async down(): Promise<void> {
-    // No down migration needed as we're fixing data
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    // Reverse the changes made in the up method
+    await queryRunner.query(`
+      ALTER TABLE "tasks" ALTER COLUMN "user_id" SET NOT NULL
+    `);
   }
 }
