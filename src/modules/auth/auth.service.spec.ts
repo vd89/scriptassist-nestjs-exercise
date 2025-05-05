@@ -14,10 +14,7 @@ describe('AuthService', () => {
   let mockConfigService: any;
 
   beforeEach(async () => {
-    // Clear all mocks before each test
-    jest.clearAllMocks();
-
-    // Mock bcrypt with correct implementation
+    // Mock bcrypt
     jest.spyOn(bcrypt, 'compare').mockImplementation(() => Promise.resolve(true));
 
     mockUsersService = {
