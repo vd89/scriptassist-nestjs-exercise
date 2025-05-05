@@ -5,7 +5,6 @@ import {
   HttpException,
   Logger,
   HttpStatus,
-  BadRequestException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { QueryFailedError } from 'typeorm';
