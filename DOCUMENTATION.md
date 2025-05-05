@@ -126,6 +126,3 @@ bun run test
 ### Code of Conduct
 - Be respectful and inclusive in all interactions.
 - Follow the project's coding standards and guidelines.
-
-## 11. License
-This project is licensed under the MIT License. See the LICENSE file for more details. 
