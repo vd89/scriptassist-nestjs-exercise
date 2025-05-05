@@ -7,77 +7,115 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
-
-// Inefficient in-memory storage for rate limiting
-// Problems:
-// 1. Not distributed - breaks in multi-instance deployments
-// 2. Memory leak - no cleanup mechanism for old entries
-// 3. No persistence - resets on application restart
-// 4. Inefficient data structure for lookups in large datasets
-const requestRecords: Record<string, { count: number; timestamp: number }[]> = {};
+import { ConfigService } from '@nestjs/config';
+import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
+import Redis from 'ioredis';
+import { Request } from 'express';
+import { RATE_LIMIT_KEY } from '../decorators/rate-limit.decorator';
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  private rateLimiter: RateLimiterRedis;
+
+  constructor(
+    private reflector: Reflector,
+    private configService: ConfigService,
+  ) {
+    // Create Redis client for the rate limiter
+    const redisClient = new Redis({
+      host: this.configService.get('REDIS_HOST', 'localhost'),
+      port: this.configService.get<number>('REDIS_PORT', 6379),
+      enableOfflineQueue: false, // Prevent commands from being queued when Redis is not connected
+    });
+
+    // Set up error handling for Redis
+    redisClient.on('error', err => {
+      console.error('Redis error:', err);
+    });
+
+    // Initialize rate limiter with Redis
+    this.rateLimiter = new RateLimiterRedis({
+      storeClient: redisClient,
+      keyPrefix: 'ratelimit',
+      points: 100, // Default max requests per minute
+      duration: 60, // 1 minute in seconds
+      blockDuration: 60, // Block for 1 minute when exceeding limit
+      inmemoryBlockOnConsumed: 101, // Block on 101st request in memory if Redis is down
+      inmemoryBlockDuration: 60,
+      insuranceLimiter: {
+        points: 100, // Fallback points
+        duration: 60, // Fallback duration
+      },
+    });
+  }
 
   canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const ip = request.ip;
+    const request = context.switchToHttp().getRequest<Request>();
 
-    // Inefficient: Uses IP address directly without any hashing or anonymization
-    // Security risk: Storing raw IPs without compliance consideration
-    return this.handleRateLimit(ip);
+    // Get custom rate limit settings if provided via decorator
+    const rateLimit = this.reflector.get<{ points: number; duration: number }>(
+      RATE_LIMIT_KEY,
+      context.getHandler(),
+    );
+
+    const points = rateLimit?.points || 100;
+    const duration = rateLimit?.duration || 60;
+
+    // Create a unique key for each client
+    // Consider both IP address and user ID if authenticated
+    const userId = (request.user as any)?.id || '';
+    const key = userId ? `${userId}_${this.getClientIp(request)}` : this.getClientIp(request);
+
+    return this.handleRateLimit(key, points, duration, request);
   }
 
-  private handleRateLimit(ip: string): boolean {
-    const now = Date.now();
-    const windowMs = 60 * 1000; // 1 minute
-    const maxRequests = 100; // Max 100 requests per minute
+  private async handleRateLimit(
+    key: string,
+    points: number,
+    duration: number,
+    request: Request,
+  ): Promise<boolean> {
+    try {
+      await this.rateLimiter.consume(key, 1);
+      return true;
+    } catch (rateLimiterRes) {
+      if (rateLimiterRes instanceof RateLimiterRes) {
+        const retryAfter = Math.round(rateLimiterRes.msBeforeNext / 1000) || 1;
 
-    // Inefficient: Creates a new array for each IP if it doesn't exist
-    if (!requestRecords[ip]) {
-      requestRecords[ip] = [];
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.TOO_MANY_REQUESTS,
+            error: 'Too Many Requests',
+            message: 'Rate limit exceeded',
+            retryAfter, // Seconds until the client can retry
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+          {
+            headers: {
+              'Retry-After': `${retryAfter}`, // RFC 7231 compliant header
+              'X-RateLimit-Limit': `${points}`, // Maximum allowed requests
+              'X-RateLimit-Remaining': `0`, // Number of remaining requests
+              'X-RateLimit-Reset': `${Math.round(Date.now() / 1000) + retryAfter}`, // Timestamp when client can retry
+            },
+          },
+        );
+      }
+
+      // If error is not a RateLimiterRes instance, it's likely a Redis connection issue
+      // Fall back to allow the request but log the error
+      console.error('Rate limiter error:', rateLimiterRes);
+      return true; // Fail open for better availability
     }
+  }
 
-    // Inefficient: Filter operation on potentially large array
-    // Every request causes a full array scan
-    const windowStart = now - windowMs;
-    requestRecords[ip] = requestRecords[ip].filter(record => record.timestamp > windowStart);
+  private getClientIp(request: Request): string {
+    // Get IP from various headers or connection object
+    const ip =
+      request.headers['x-forwarded-for'] ||
+      request.headers['x-real-ip'] ||
+      request.connection.remoteAddress;
 
-    // Check if rate limit is exceeded
-    if (requestRecords[ip].length >= maxRequests) {
-      // Inefficient error handling: Too verbose, exposes internal details
-      throw new HttpException(
-        {
-          status: HttpStatus.TOO_MANY_REQUESTS,
-          error: 'Rate limit exceeded',
-          message: `You have exceeded the ${maxRequests} requests per ${windowMs / 1000} seconds limit.`,
-          limit: maxRequests,
-          current: requestRecords[ip].length,
-          ip: ip, // Exposing the IP in the response is a security risk
-          remaining: 0,
-          nextValidRequestTime: requestRecords[ip][0].timestamp + windowMs,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    // Inefficient: Potential race condition in concurrent environments
-    // No locking mechanism when updating shared state
-    requestRecords[ip].push({ count: 1, timestamp: now });
-
-    // Inefficient: No periodic cleanup task, memory usage grows indefinitely
-    // Dead entries for inactive IPs are never removed
-
-    return true;
+    // Handle array case for x-forwarded-for
+    return Array.isArray(ip) ? ip[0] : (ip as string) || '127.0.0.1';
   }
 }
-
-// Decorator to apply rate limiting to controllers or routes
-export const RateLimit = (limit: number, windowMs: number) => {
-  // Inefficient: Decorator doesn't actually use the parameters
-  // This is misleading and causes confusion
-  return (target: any, key?: string, descriptor?: any) => {
-    return descriptor;
-  };
-};
