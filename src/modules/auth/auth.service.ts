@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { CacheService } from '@common/services/cache.service';
 import * as bcrypt from 'bcrypt';
 import {
   ILoginResponse,
@@ -16,7 +17,17 @@ export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
+    private readonly cacheService: CacheService,
   ) {}
+
+  // Cache key helpers
+  private getTokenCacheKey(userId: string): string {
+    return `auth:token:${userId}`;
+  }
+
+  private getBlacklistCacheKey(token: string): string {
+    return `auth:blacklist:${token}`;
+  }
 
   /**
    * Authenticates a user and returns a JWT token.
@@ -55,8 +66,13 @@ export class AuthService {
         role: user.role
       };
 
+      const token = this.jwtService.sign(payload);
+      
+      // Cache the token
+      await this.cacheService.set(this.getTokenCacheKey(user.id), token);
+
       return {
-        access_token: this.jwtService.sign(payload),
+        access_token: token,
         user: {
           id: user.id,
           email: user.email,
@@ -96,7 +112,10 @@ export class AuthService {
       const user = await this.usersService.create(registerDto);
 
       // Generate JWT token
-      const token = this.generateToken(user.id);
+      const token = this.jwtService.sign({ sub: user.id });
+
+      // Cache the token
+      await this.cacheService.set(this.getTokenCacheKey(user.id), token);
 
       return {
         user: {
@@ -178,5 +197,49 @@ export class AuthService {
         details: error instanceof Error ? error.message : 'Unknown error',
       }, HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }
+
+  async logout(userId: string) {
+    // Get the current token
+    const token = await this.cacheService.get<string>(this.getTokenCacheKey(userId));
+    if (token) {
+      // Add token to blacklist
+      await this.cacheService.set(this.getBlacklistCacheKey(token), true);
+      // Remove token from active tokens
+      await this.cacheService.delete(this.getTokenCacheKey(userId));
+    }
+  }
+
+  async validateToken(token: string): Promise<boolean> {
+    try {
+      // Check if token is blacklisted
+      const isBlacklisted = await this.cacheService.get<boolean>(this.getBlacklistCacheKey(token));
+      if (isBlacklisted) {
+        return false;
+      }
+
+      // Verify token
+      const payload = this.jwtService.verify(token);
+      const cachedToken = await this.cacheService.get<string>(this.getTokenCacheKey(payload.sub));
+      
+      // Token is valid if it matches the cached token
+      return cachedToken === token;
+    } catch {
+      return false;
+    }
+  }
+
+  async refreshToken(userId: string) {
+    const user = await this.usersService.findOne(userId);
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const token = this.jwtService.sign({ sub: user.id });
+    
+    // Update cached token
+    await this.cacheService.set(this.getTokenCacheKey(userId), token);
+    
+    return { token };
   }
 } 

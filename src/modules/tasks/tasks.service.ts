@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { CacheService } from '@common/services/cache.service';
 
 import { Task } from './entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -33,7 +34,21 @@ export class TasksService {
     private taskQueue: Queue, // BullMQ queue for background processing
 
     private dataSource: DataSource, // Used for wrapping DB operations in transactions
+    private readonly cacheService: CacheService,
   ) {}
+
+  // Cache key helpers
+  private getTaskCacheKey(id: string): string {
+    return `task:${id}`;
+  }
+
+  private getUserTasksCacheKey(userId: string): string {
+    return `user:${userId}:tasks`;
+  }
+
+  private getTasksListCacheKey(): string {
+    return 'tasks:list';
+  }
 
   /**
    * Creates a new task associated with a user.
@@ -66,6 +81,13 @@ export class TasksService {
           status: savedTask.status,
         });
 
+        // Cache the new task
+        await this.cacheService.set(this.getTaskCacheKey(savedTask.id), savedTask);
+        
+        // Invalidate related caches
+        await this.cacheService.delete(this.getUserTasksCacheKey(createTaskDto.userId));
+        await this.cacheService.delete(this.getTasksListCacheKey());
+
         return savedTask;
       } catch (error: unknown) {
         throw new BadRequestException({
@@ -81,10 +103,21 @@ export class TasksService {
    * Returns all tasks with related user info.
    */
   async findAll(): Promise<Task[]> {
-    // Fetch tasks with their associated user entity
-    return this.tasksRepository.find({
+    // Try to get from cache first
+    const cachedTasks = await this.cacheService.get<Task[]>(this.getTasksListCacheKey());
+    if (cachedTasks) {
+      return cachedTasks;
+    }
+
+    // If not in cache, get from database
+    const tasks = await this.tasksRepository.find({
       relations: ['user'],
     });
+    
+    // Cache the result
+    await this.cacheService.set(this.getTasksListCacheKey(), tasks);
+    
+    return tasks;
   }
 
   /**
@@ -192,6 +225,12 @@ export class TasksService {
    */
   async findOne(id: string): Promise<Task> {
     try {
+      // Try to get from cache first
+      const cachedTask = await this.cacheService.get<Task>(this.getTaskCacheKey(id));
+      if (cachedTask) {
+        return cachedTask;
+      }
+
       // Lookup task by ID including its related user
       const task = await this.tasksRepository.findOne({
         where: { id },
@@ -204,6 +243,9 @@ export class TasksService {
           error: 'Task Not Found',
         });
       }
+
+      // Cache the result
+      await this.cacheService.set(this.getTaskCacheKey(id), task);
 
       return task;
     } catch (error: unknown) {
@@ -254,6 +296,13 @@ export class TasksService {
           });
         }
 
+        // Update cache
+        await this.cacheService.set(this.getTaskCacheKey(id), updatedTask);
+        
+        // Invalidate related caches
+        await this.cacheService.delete(this.getUserTasksCacheKey(task.userId));
+        await this.cacheService.delete(this.getTasksListCacheKey());
+
         return updatedTask;
       } catch (error: unknown) {
         if (error instanceof HttpException) {
@@ -286,6 +335,13 @@ export class TasksService {
 
       // Remove task from the database
       await this.tasksRepository.remove(task);
+
+      // Remove from cache
+      await this.cacheService.delete(this.getTaskCacheKey(id));
+      
+      // Invalidate related caches
+      await this.cacheService.delete(this.getUserTasksCacheKey(task.userId));
+      await this.cacheService.delete(this.getTasksListCacheKey());
 
       return { message: `Task with ID ${id} has been successfully deleted.` };
     } catch (error: unknown) {
