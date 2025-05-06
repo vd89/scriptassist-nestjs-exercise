@@ -1,9 +1,15 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
+import { Role } from '@common/enums/role.enum';
 
 export class CreateInitialSchema1710752400000 implements MigrationInterface {
   name = 'CreateInitialSchema1710752400000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Create enum type for roles
+    await queryRunner.query(`
+      CREATE TYPE "user_role_enum" AS ENUM ('${Role.ADMIN}', '${Role.USER}')
+    `);
+
     // Create tables for users, tasks, and other entities
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "users" (
@@ -11,7 +17,7 @@ export class CreateInitialSchema1710752400000 implements MigrationInterface {
         "email" varchar NOT NULL UNIQUE,
         "name" varchar NOT NULL,
         "password" varchar NOT NULL,
-        "role" varchar NOT NULL DEFAULT 'user',
+        "role" "user_role_enum" NOT NULL DEFAULT '${Role.USER}',
         "created_at" TIMESTAMP NOT NULL DEFAULT now(),
         "updated_at" TIMESTAMP NOT NULL DEFAULT now()
       )
@@ -39,5 +45,6 @@ export class CreateInitialSchema1710752400000 implements MigrationInterface {
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP TABLE IF EXISTS "tasks"`);
     await queryRunner.query(`DROP TABLE IF EXISTS "users"`);
+    await queryRunner.query(`DROP TYPE IF EXISTS "user_role_enum"`);
   }
 } 

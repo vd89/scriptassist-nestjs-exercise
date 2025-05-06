@@ -10,23 +10,106 @@ import {
   IRegisterResponse,
   IJwtPayload,
   IValidateUserResponse,
+  ITokenPair,
 } from './interfaces/auth.interface';
+import { v4 as uuidv4 } from 'uuid';
+import { Role } from '@common/enums/role.enum';
+import { Logger } from '@nestjs/common';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly cacheService: CacheService,
-  ) {}
+  ) {
+    // Log cache service status on initialization
+    this.logger.debug('AuthService initialized');
+    this.checkCacheService();
+  }
+
+  private async checkCacheService() {
+    try {
+      // Try to set and get a test value
+      const testKey = 'auth:test:connection';
+      const testValue = 'test-value';
+      
+      await this.cacheService.set(testKey, testValue, 60);
+      const retrievedValue = await this.cacheService.get<string>(testKey);
+      
+      if (retrievedValue === testValue) {
+        this.logger.debug('Cache service is working properly');
+      } else {
+        this.logger.error('Cache service is not working properly - test value mismatch');
+      }
+      
+      // Clean up test key
+      await this.cacheService.delete(testKey);
+    } catch (error: unknown) {
+      this.logger.error(`Cache service error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
 
   // Cache key helpers
   private getTokenCacheKey(userId: string): string {
     return `auth:token:${userId}`;
   }
 
+  private getRefreshTokenCacheKey(userId: string): string {
+    return `auth:refresh:${userId}`;
+  }
+
   private getBlacklistCacheKey(token: string): string {
     return `auth:blacklist:${token}`;
+  }
+
+  private async generateTokenPair(userId: string, email: string, role: Role): Promise<ITokenPair> {
+    const accessToken = this.jwtService.sign(
+      { sub: userId, email, role },
+      { expiresIn: '15m' } // Short-lived access token
+    );
+
+    const refreshToken = uuidv4(); // Generate a unique refresh token
+    const refreshTokenExpiry = 60 * 60 * 24 * 7; // 7 days in seconds
+
+    // Store refresh token in cache
+    const cacheKey = this.getRefreshTokenCacheKey(userId);
+    this.logger.debug(`Storing refresh token for user ${userId} with key ${cacheKey}`);
+    
+    try {
+      // First check if we can set a value
+      const testKey = 'auth:test:write';
+      await this.cacheService.set(testKey, 'test', 60);
+      const testValue = await this.cacheService.get<string>(testKey);
+      this.logger.debug(`Cache write test result: ${testValue === 'test' ? 'success' : 'failed'}`);
+      await this.cacheService.delete(testKey);
+
+      // Now store the actual refresh token
+      await this.cacheService.set(
+        cacheKey,
+        refreshToken,
+        refreshTokenExpiry
+      );
+
+      // Verify the token was stored
+      const storedToken = await this.cacheService.get<string>(cacheKey);
+      if (storedToken === refreshToken) {
+        this.logger.debug(`Successfully stored and verified refresh token for user ${userId}`);
+      } else {
+        this.logger.error(`Failed to verify refresh token storage for user ${userId}`);
+        throw new Error('Failed to verify refresh token storage');
+      }
+    } catch (error: unknown) {
+      this.logger.error(`Failed to store refresh token for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
+    }
+
+    return {
+      accessToken,
+      refreshToken,
+    };
   }
 
   /**
@@ -59,20 +142,11 @@ export class AuthService {
         });
       }
 
-      // Generate JWT payload
-      const payload: IJwtPayload = { 
-        sub: user.id, 
-        email: user.email, 
-        role: user.role
-      };
-
-      const token = this.jwtService.sign(payload);
-      
-      // Cache the token
-      await this.cacheService.set(this.getTokenCacheKey(user.id), token);
+      const { accessToken, refreshToken } = await this.generateTokenPair(user.id, user.email, user.role);
 
       return {
-        access_token: token,
+        access_token: accessToken,
+        refresh_token: refreshToken,
         user: {
           id: user.id,
           email: user.email,
@@ -139,23 +213,6 @@ export class AuthService {
   }
 
   /**
-   * Generates a JWT token for a user.
-   * @param userId The ID of the user to generate the token for
-   */
-  private generateToken(userId: string): string {
-    try {
-      const payload: IJwtPayload = { sub: userId };
-      return this.jwtService.sign(payload);
-    } catch (error) {
-      throw new HttpException({
-        message: 'Failed to generate authentication token',
-        error: 'Token Generation Failed',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      }, HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
-
-  /**
    * Validates a user by their ID.
    * Returns null if user not found.
    */
@@ -186,10 +243,13 @@ export class AuthService {
    * Validates if a user has the required roles.
    * Currently returns true for all users (to be implemented).
    */
-  async validateUserRoles(userId: string, requiredRoles: string[]): Promise<boolean> {
+  async validateUserRoles(userId: string, requiredRoles: Role[]): Promise<boolean> {
     try {
-      // TODO: Implement role validation logic
-      return true;
+      const user = await this.usersService.findOne(userId);
+      if (!user) {
+        return false;
+      }
+      return requiredRoles.includes(user.role);
     } catch (error) {
       throw new HttpException({
         message: 'Failed to validate user roles',
@@ -200,13 +260,24 @@ export class AuthService {
   }
 
   async logout(userId: string) {
-    // Get the current token
-    const token = await this.cacheService.get<string>(this.getTokenCacheKey(userId));
-    if (token) {
-      // Add token to blacklist
-      await this.cacheService.set(this.getBlacklistCacheKey(token), true);
-      // Remove token from active tokens
-      await this.cacheService.delete(this.getTokenCacheKey(userId));
+    try {
+      // Invalidate refresh token
+      await this.cacheService.delete(this.getRefreshTokenCacheKey(userId));
+      
+      // Get the current access token
+      const token = await this.cacheService.get<string>(this.getTokenCacheKey(userId));
+      if (token) {
+        // Add token to blacklist
+        await this.cacheService.set(this.getBlacklistCacheKey(token), true, 60 * 15); // 15 minutes
+        // Remove token from active tokens
+        await this.cacheService.delete(this.getTokenCacheKey(userId));
+      }
+    } catch (error) {
+      throw new HttpException({
+        message: 'Failed to logout',
+        error: 'Logout Failed',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      }, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -229,17 +300,61 @@ export class AuthService {
     }
   }
 
-  async refreshToken(userId: string) {
-    const user = await this.usersService.findOne(userId);
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
+  async refreshToken(refreshToken: string): Promise<ITokenPair> {
+    try {
+      // Find user by refresh token
+      const userId = await this.findUserByRefreshToken(refreshToken);
+      if (!userId) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
 
-    const token = this.jwtService.sign({ sub: user.id });
-    
-    // Update cached token
-    await this.cacheService.set(this.getTokenCacheKey(userId), token);
-    
-    return { token };
+      const user = await this.usersService.findOne(userId);
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+
+      // Generate new token pair
+      const newTokenPair = await this.generateTokenPair(user.id, user.email, user.role);
+
+      // Invalidate old refresh token
+      await this.cacheService.delete(this.getRefreshTokenCacheKey(userId));
+
+      return newTokenPair;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException({
+        message: 'Failed to refresh token',
+        error: 'Token Refresh Failed',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      }, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  private async findUserByRefreshToken(refreshToken: string): Promise<string | null> {
+    try {
+      // Get all refresh token keys
+      const keys = await this.cacheService.keys('auth:refresh:*');
+      this.logger.debug(`Found ${keys.length} refresh token keys in cache`);
+      
+      // Check each key for the matching refresh token
+      for (const key of keys) {
+        const storedToken = await this.cacheService.get<string>(key);
+        this.logger.debug(`Checking key ${key} with stored token: ${storedToken}`);
+        
+        if (storedToken === refreshToken) {
+          // Extract user ID from the key (format: namespace:auth:refresh:userId)
+          const userId = key.split(':').pop();
+          this.logger.debug(`Found matching refresh token for user ${userId}`);
+          return userId || null;
+        }
+      }
+      this.logger.debug('No matching refresh token found');
+      return null;
+    } catch (error: unknown) {
+      this.logger.error(`Error finding user by refresh token: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return null;
+    }
   }
 } 

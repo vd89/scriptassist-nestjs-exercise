@@ -230,4 +230,8 @@ export class CacheService {
       throw error;
     }
   }
+
+  async keys(pattern: string): Promise<string[]> {
+    return this.redis.keys(pattern);
+  }
 } 

@@ -1,9 +1,12 @@
+import { Role } from '@common/enums/role.enum';
+
 export interface ILoginResponse {
   access_token: string;
+  refresh_token: string;
   user: {
     id: string;
     email: string;
-    role: string;
+    role: Role;
   };
 }
 
@@ -12,7 +15,7 @@ export interface IRegisterResponse {
     id: string;
     email: string;
     name: string;
-    role: string;
+    role: Role;
   };
   token: string;
 }
@@ -20,7 +23,7 @@ export interface IRegisterResponse {
 export interface IJwtPayload {
   sub: string;
   email?: string;
-  role?: string;
+  role?: Role;
 }
 
 export interface ILogData {
@@ -36,5 +39,10 @@ export interface IValidateUserResponse {
   id: string;
   email: string;
   name: string;
-  role: string;
+  role: Role;
+}
+
+export interface ITokenPair {
+  accessToken: string;
+  refreshToken: string;
 } 
