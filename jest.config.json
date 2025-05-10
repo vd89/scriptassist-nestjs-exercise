@@ -1,0 +1,32 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": "src/.*\\.spec\\.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "testPathIgnorePatterns": [
+    "/node_modules/",
+    "<rootDir>/dist/",
+    "<rootDir>/test/",
+    "<rootDir>/src/common/",
+    ".*\\.d\\.ts$"
+  ],
+  "coveragePathIgnorePatterns": [
+    "/node_modules/",
+    "<rootDir>/dist/",
+    "<rootDir>/test/",
+    "<rootDir>/src/common/"
+  ],
+  "modulePathIgnorePatterns": ["<rootDir>/dist/"],
+  "moduleNameMapper": {
+    "^@common/(.*)$": "<rootDir>/src/common/$1",
+    "^@config/(.*)$": "<rootDir>/src/config/$1",
+    "^@modules/(.*)$": "<rootDir>/src/modules/$1",
+    "^@database/(.*)$": "<rootDir>/src/database/$1",
+    "^@queues/(.*)$": "<rootDir>/src/queues/$1",
+    "^@types/(.*)$": "<rootDir>/src/types/$1",
+    "^@mocks/(.*)$": "<rootDir>/src/mocks/$1"
+  }
+}
