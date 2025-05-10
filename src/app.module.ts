@@ -7,6 +7,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { UsersModule } from './modules/users/users.module';
 import { TasksModule } from './modules/tasks/tasks.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { HealthModule } from './modules/health/health.module';
 import { TaskProcessorModule } from './queues/task-processor/task-processor.module';
 import { ScheduledTasksModule } from './queues/scheduled-tasks/scheduled-tasks.module';
 import { CacheService } from './common/services/cache.service';
@@ -17,7 +18,7 @@ import { CacheService } from './common/services/cache.service';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    
+
     // Database
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -34,10 +35,10 @@ import { CacheService } from './common/services/cache.service';
         logging: configService.get('NODE_ENV') === 'development',
       }),
     }),
-    
+
     // Scheduling
     ScheduleModule.forRoot(),
-    
+
     // Queue
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -49,24 +50,23 @@ import { CacheService } from './common/services/cache.service';
         },
       }),
     }),
-    
+
     // Rate limiting
     ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ([
+      useFactory: () => [
         {
           ttl: 60,
           limit: 10,
         },
-      ]),
+      ],
     }),
-    
+
     // Feature modules
     UsersModule,
     TasksModule,
     AuthModule,
-    
+    HealthModule, // Added Health Module
+
     // Queue processing modules
     TaskProcessorModule,
     ScheduledTasksModule,
@@ -74,12 +74,12 @@ import { CacheService } from './common/services/cache.service';
   providers: [
     // Inefficient: Global cache service with no configuration options
     // This creates a single in-memory cache instance shared across all modules
-    CacheService
+    CacheService,
   ],
   exports: [
     // Exporting the cache service makes it available to other modules
     // but creates tight coupling
-    CacheService
-  ]
+    CacheService,
+  ],
 })
-export class AppModule {} 
+export class AppModule {}

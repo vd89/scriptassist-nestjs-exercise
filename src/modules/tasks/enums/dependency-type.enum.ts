@@ -1,0 +1,7 @@
+export enum DependencyType {
+  BLOCKS = 'BLOCKS',
+  BLOCKED_BY = 'BLOCKED_BY',
+  RELATES_TO = 'RELATES_TO',
+  DUPLICATES = 'DUPLICATES',
+  DUPLICATED_BY = 'DUPLICATED_BY',
+}
