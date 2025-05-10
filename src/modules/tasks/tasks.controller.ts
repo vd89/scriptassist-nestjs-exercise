@@ -33,7 +33,7 @@ import { BatchProcessDto } from './dto/batch-process.dto';
 @ApiTags('tasks')
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard, RateLimitGuard)
-@RateLimit({ points: 100, duration: 60000 })
+@RateLimit({ points: 2, duration: 10 })
 @ApiBearerAuth()
 export class TasksController {
   constructor(

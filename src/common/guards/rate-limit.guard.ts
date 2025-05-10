@@ -16,7 +16,6 @@ import { RateLimitException } from '../exceptions/rate-limit.exception';
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   private redisClient: Redis;
-  private insuranceLimiter: RateLimiterMemory;
   private readonly limiters = new Map<string, RateLimiterRedis>();
   private readonly defaultPoints = 100;
   private readonly defaultDuration = 60; // Default duration in seconds
@@ -49,21 +48,24 @@ export class RateLimitGuard implements CanActivate {
         // Do not throw or crash the app
       },
     );
-
-    // Create an insurance limiter (in-memory fallback)
-    // Use defaults matching the most common rate limit expected, or make configurable
-    const insuranceLimiterOptions: IRateLimiterOptions = {
-      points: this.defaultPoints, // Fallback points
-      duration: this.defaultDuration, // Fallback duration
-      keyPrefix: 'ratelimit_insurance', // Use a different prefix for insurance
-    };
-    this.insuranceLimiter = new RateLimiterMemory(insuranceLimiterOptions);
   }
 
   private createRateLimiter(points: number, duration: number): RateLimiterRedis {
     // Create a unique key prefix for this specific limit configuration
     // This ensures keys in Redis don't clash for different limits on the same resource
     const keyPrefix = `ratelimit_${points}_${duration}`;
+
+    // Create an insurance limiter (in-memory fallback)
+    // Use defaults matching the most common rate limit expected, or make configurable
+    const insuranceLimiterOptions: IRateLimiterOptions = {
+      points, // Fallback points
+      duration, // Fallback duration
+      keyPrefix: 'ratelimit_insurance', // Use a different prefix for insurance
+    };
+
+    console.log({
+      insuranceLimiterOptions,
+    });
 
     return new RateLimiterRedis({
       storeClient: this.redisClient,
@@ -73,7 +75,7 @@ export class RateLimitGuard implements CanActivate {
       blockDuration: duration, // Block for the duration of the limit window when exceeded
       inMemoryBlockOnConsumed: points + 1, // Block in memory if Redis is down after exceeding points
       inMemoryBlockDuration: duration,
-      insuranceLimiter: this.insuranceLimiter, // Use the shared insurance limiter
+      insuranceLimiter: new RateLimiterMemory(insuranceLimiterOptions), // Use the shared insurance limiter
     });
   }
 
