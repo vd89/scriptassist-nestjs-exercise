@@ -76,40 +76,30 @@ export class AuthService {
 
     // Store refresh token in cache
     const cacheKey = this.getRefreshTokenCacheKey(userId);
-    this.logger.debug(`Storing refresh token for user ${userId} with key ${cacheKey}`);
     
     try {
-      // First check if we can set a value
-      const testKey = 'auth:test:write';
-      await this.cacheService.set(testKey, 'test', 60);
-      const testValue = await this.cacheService.get<string>(testKey);
-      this.logger.debug(`Cache write test result: ${testValue === 'test' ? 'success' : 'failed'}`);
-      await this.cacheService.delete(testKey);
-
-      // Now store the actual refresh token
+      // Store the refresh token
       await this.cacheService.set(
         cacheKey,
         refreshToken,
         refreshTokenExpiry
       );
 
-      // Verify the token was stored
-      const storedToken = await this.cacheService.get<string>(cacheKey);
-      if (storedToken === refreshToken) {
-        this.logger.debug(`Successfully stored and verified refresh token for user ${userId}`);
-      } else {
-        this.logger.error(`Failed to verify refresh token storage for user ${userId}`);
-        throw new Error('Failed to verify refresh token storage');
-      }
-    } catch (error: unknown) {
-      this.logger.error(`Failed to store refresh token for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      // Store the access token
+      await this.cacheService.set(
+        this.getTokenCacheKey(userId),
+        accessToken,
+        60 * 15 // 15 minutes
+      );
+
+      return {
+        accessToken,
+        refreshToken,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to store tokens for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
-
-    return {
-      accessToken,
-      refreshToken,
-    };
   }
 
   /**
@@ -259,20 +249,36 @@ export class AuthService {
     }
   }
 
-  async logout(userId: string) {
+  /**
+   * Logs out a user by invalidating their tokens.
+   * This method:
+   * 1. Invalidates the refresh token by removing it from cache
+   * 2. Blacklists the current access token
+   * 3. Removes the active token from cache
+   */
+  async logout(userId: string): Promise<{ message: string }> {
     try {
-      // Invalidate refresh token
-      await this.cacheService.delete(this.getRefreshTokenCacheKey(userId));
-      
-      // Get the current access token
+      // Get the current access token from cache
       const token = await this.cacheService.get<string>(this.getTokenCacheKey(userId));
+      
       if (token) {
-        // Add token to blacklist
-        await this.cacheService.set(this.getBlacklistCacheKey(token), true, 60 * 15); // 15 minutes
-        // Remove token from active tokens
+        // Add current access token to blacklist with 15 minutes expiry
+        await this.cacheService.set(
+          this.getBlacklistCacheKey(token),
+          true,
+          60 * 15 // 15 minutes
+        );
+        
+        // Remove the active token
         await this.cacheService.delete(this.getTokenCacheKey(userId));
       }
+
+      // Invalidate refresh token
+      await this.cacheService.delete(this.getRefreshTokenCacheKey(userId));
+
+      return { message: 'Logout successful' };
     } catch (error) {
+      this.logger.error(`Logout failed for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw new HttpException({
         message: 'Failed to logout',
         error: 'Logout Failed',
@@ -281,6 +287,13 @@ export class AuthService {
     }
   }
 
+  /**
+   * Validates if a token is blacklisted or invalid.
+   * This method:
+   * 1. Checks if the token is in the blacklist
+   * 2. Verifies the token's signature
+   * 3. Checks if the token matches the cached token
+   */
   async validateToken(token: string): Promise<boolean> {
     try {
       // Check if token is blacklisted
@@ -289,8 +302,10 @@ export class AuthService {
         return false;
       }
 
-      // Verify token
+      // Verify token signature and expiration
       const payload = this.jwtService.verify(token);
+      
+      // Get the cached token for this user
       const cachedToken = await this.cacheService.get<string>(this.getTokenCacheKey(payload.sub));
       
       // Token is valid if it matches the cached token
