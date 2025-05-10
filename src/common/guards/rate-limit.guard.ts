@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { ConfigService } from '@nestjs/config';
@@ -15,6 +15,7 @@ import { RateLimitException } from '../exceptions/rate-limit.exception';
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
+  private readonly logger = new Logger(RateLimitGuard.name);
   private redisClient: Redis;
   private readonly limiters = new Map<string, RateLimiterRedis>();
   private readonly defaultPoints = 100;
@@ -28,7 +29,7 @@ export class RateLimitGuard implements CanActivate {
     this.redisClient = new Redis({
       host: this.configService.get('REDIS_HOST', 'localhost'),
       port: this.configService.get<number>('REDIS_PORT', 6379),
-      enableOfflineQueue: false, // Prevent commands from being queued when Redis is not connected
+      enableOfflineQueue: false,
     });
 
     // Set up error handling for Redis
@@ -36,61 +37,63 @@ export class RateLimitGuard implements CanActivate {
       'error',
       (err: Error & { code?: string; address?: string; port?: number }) => {
         if (err.code === 'ECONNREFUSED') {
-          // Log a concise, user-friendly warning and degrade gracefully
-          // eslint-disable-next-line no-console
-          console.warn(
-            `Redis connection refused at ${err.address}:${err.port}. Rate limiting is running in degraded (in-memory) mode. Please ensure Redis is running and accessible.`,
+          this.logger.warn(
+            `Redis connection refused at ${err.address}:${err.port}. Rate limiting is running in degraded (in-memory) mode.`,
           );
         } else {
-          // eslint-disable-next-line no-console
-          console.error('Redis error:', err.message);
+          this.logger.error(`Redis error: ${err.message}`);
         }
-        // Do not throw or crash the app
       },
     );
   }
 
   private createRateLimiter(points: number, duration: number): RateLimiterRedis {
-    // Create a unique key prefix for this specific limit configuration
-    // This ensures keys in Redis don't clash for different limits on the same resource
     const keyPrefix = `ratelimit_${points}_${duration}`;
 
-    // Create an insurance limiter (in-memory fallback)
-    // Use defaults matching the most common rate limit expected, or make configurable
     const insuranceLimiterOptions: IRateLimiterOptions = {
-      points, // Fallback points
-      duration, // Fallback duration
-      keyPrefix: 'ratelimit_insurance', // Use a different prefix for insurance
+      points,
+      duration,
+      keyPrefix: 'ratelimit_insurance',
     };
 
-    console.log({
-      insuranceLimiterOptions,
-    });
+    this.logger.debug(`Creating rate limiter: ${points} points per ${duration}s`);
 
     return new RateLimiterRedis({
       storeClient: this.redisClient,
-      keyPrefix: keyPrefix,
-      points: points,
-      duration: duration,
-      blockDuration: duration, // Block for the duration of the limit window when exceeded
-      inMemoryBlockOnConsumed: points + 1, // Block in memory if Redis is down after exceeding points
+      keyPrefix,
+      points,
+      duration,
+      blockDuration: duration,
+      inMemoryBlockOnConsumed: points + 1,
       inMemoryBlockDuration: duration,
-      insuranceLimiter: new RateLimiterMemory(insuranceLimiterOptions), // Use the shared insurance limiter
+      insuranceLimiter: new RateLimiterMemory(insuranceLimiterOptions),
     });
   }
 
   canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
+    const handler = context.getHandler();
+    const controller = context.getClass();
 
-    // Get custom rate limit settings if provided via decorator
-    const rateLimitOptions = this.reflector.get<RateLimitOptions>(
-      RATE_LIMIT_KEY,
-      context.getHandler(),
-    );
+    // First check for handler-level rate limit options
+    let rateLimitOptions = this.reflector.get<RateLimitOptions>(RATE_LIMIT_KEY, handler);
+
+    // If not found on handler, check for controller-level options
+    if (!rateLimitOptions) {
+      rateLimitOptions = this.reflector.get<RateLimitOptions>(RATE_LIMIT_KEY, controller);
+    }
+
+    this.logger.debug(`Rate limit options: ${JSON.stringify(rateLimitOptions)}`);
 
     // Extract points and duration from options or use defaults
     const points = rateLimitOptions?.points ?? this.defaultPoints;
     const duration = rateLimitOptions?.duration ?? this.defaultDuration;
+
+    const routeName = handler.name || 'unknown';
+    const isCustomLimit = !!rateLimitOptions;
+    this.logger.debug(
+      `Rate limit for ${routeName}: ${points} requests per ${duration}s ${isCustomLimit ? '(custom)' : '(default)'}`,
+    );
 
     // Generate a unique key for the limiter configuration
     const configKey = `${points}:${duration}`;
@@ -102,9 +105,8 @@ export class RateLimitGuard implements CanActivate {
       this.limiters.set(configKey, limiter);
     }
 
-    // Create a unique key for each client (IP or IP + User ID)
-    const userId = (request.user as any)?.id || ''; // Use nullish coalescing
-    // Note: The key for the limiter instance (configKey) is different from the client key
+    // Create a unique key for each client
+    const userId = (request.user as any)?.id || '';
     const clientKey = userId ? `${userId}_${this.getClientIp(request)}` : this.getClientIp(request);
 
     // Pass the specific limiter instance and points to the handler
@@ -114,50 +116,34 @@ export class RateLimitGuard implements CanActivate {
   private async handleRateLimit(
     limiter: RateLimiterRedis,
     key: string,
-    points: number, // Pass points to use in the exception
+    points: number,
   ): Promise<boolean> {
     try {
-      // Consume 1 point for the specific client key using the correct limiter instance
       await limiter.consume(key, 1);
       return true;
     } catch (rateLimiterRes) {
       if (rateLimiterRes instanceof RateLimiterRes) {
-        const retryAfter = Math.ceil(rateLimiterRes.msBeforeNext / 1000) || 1; // Use ceil and ensure minimum 1
-        const resetTime = Math.floor(Date.now() / 1000) + retryAfter; // Use floor for timestamp
+        const retryAfter = Math.ceil(rateLimiterRes.msBeforeNext / 1000) || 1;
+        const resetTime = Math.floor(Date.now() / 1000) + retryAfter;
 
-        // Throw custom exception with details from the specific limit configuration
-        throw new RateLimitException(
-          retryAfter,
-          points, // Use the actual points limit for this route
-          rateLimiterRes.remainingPoints, // Provide remaining points if available
-          resetTime,
-        );
+        throw new RateLimitException(retryAfter, points, rateLimiterRes.remainingPoints, resetTime);
       }
 
-      // If error is not a RateLimiterRes instance, it's likely a Redis connection issue
-      // The insuranceLimiter should handle this, but log unexpected errors
-      console.error('Rate limiter unexpected error:', rateLimiterRes);
-      // Depending on policy, you might want to fail closed (return false)
-      // But failing open maintains availability during Redis issues
+      this.logger.error('Rate limiter unexpected error:', rateLimiterRes);
       return true; // Fail open for better availability
     }
   }
 
   private getClientIp(request: Request): string {
-    // Prioritize 'x-forwarded-for' if behind a proxy
     const forwardedFor = request.headers['x-forwarded-for'];
     if (typeof forwardedFor === 'string') {
-      // Take the first IP if multiple are present
       return forwardedFor.split(',')[0].trim();
     }
     if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
       return forwardedFor[0].trim();
     }
 
-    // Fallback to other headers or connection remote address
     const ip = request.headers['x-real-ip'] || request.connection.remoteAddress;
-
-    // Ensure a string is returned, default to localhost if unavailable
     return (typeof ip === 'string' ? ip : null) ?? '127.0.0.1';
   }
 }
