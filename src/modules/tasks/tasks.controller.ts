@@ -8,7 +8,6 @@ import {
   Delete,
   UseGuards,
   Query,
-  HttpException,
   HttpStatus,
   HttpCode,
 } from '@nestjs/common';
@@ -16,9 +15,6 @@ import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags, ApiResponse } from '@nestjs/swagger';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Task } from './entities/task.entity';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -33,14 +29,10 @@ import { BatchProcessDto } from './dto/batch-process.dto';
 @ApiTags('tasks')
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard, RateLimitGuard)
-@RateLimit({ points: 2, duration: 10 })
+@RateLimit({ points: 100, duration: 60000 })
 @ApiBearerAuth()
 export class TasksController {
-  constructor(
-    private readonly tasksService: TasksService,
-    @InjectRepository(Task)
-    private taskRepository: Repository<Task>,
-  ) {}
+  constructor(private readonly tasksService: TasksService) {}
 
   @Post()
   @Roles('admin', 'user')
@@ -83,13 +75,7 @@ export class TasksController {
   @ApiResponse({ status: 404, description: 'Task not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async findOne(@Param('id') id: string, @GetUser() user: User) {
-    const task = await this.tasksService.findOne(id, user);
-
-    if (!task) {
-      throw new HttpException('Task not found', HttpStatus.NOT_FOUND);
-    }
-
-    return task;
+    return this.tasksService.findOne(id, user);
   }
 
   @Patch(':id')
@@ -104,12 +90,6 @@ export class TasksController {
     @Body() updateTaskDto: UpdateTaskDto,
     @GetUser() user: User,
   ) {
-    const task = await this.tasksService.findOne(id, user);
-
-    if (!task) {
-      throw new HttpException('Task not found', HttpStatus.NOT_FOUND);
-    }
-
     return this.tasksService.update(id, updateTaskDto, user);
   }
 
@@ -121,12 +101,6 @@ export class TasksController {
   @ApiResponse({ status: 404, description: 'Task not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async remove(@Param('id') id: string, @GetUser() user: User) {
-    const task = await this.tasksService.findOne(id, user);
-
-    if (!task) {
-      throw new HttpException('Task not found', HttpStatus.NOT_FOUND);
-    }
-
     await this.tasksService.remove(id, user);
   }
 
