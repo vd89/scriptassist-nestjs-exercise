@@ -16,10 +16,6 @@ export class UserResponseDto {
   name: string;
 
   @Expose()
-  @ApiProperty({ example: 'user' })
-  role: string;
-
-  @Expose()
   @ApiProperty({ example: '2023-01-01T00:00:00.000Z' })
   createdAt: Date;
 
