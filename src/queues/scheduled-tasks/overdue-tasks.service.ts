@@ -10,6 +10,7 @@ import { TaskStatus } from '../../modules/tasks/enums/task-status.enum';
 @Injectable()
 export class OverdueTasksService {
   private readonly logger = new Logger(OverdueTasksService.name);
+  private readonly BATCH_SIZE = 100; // Process in batches of 100 tasks
 
   constructor(
     @InjectQueue('task-processing')
@@ -24,25 +25,64 @@ export class OverdueTasksService {
   async checkOverdueTasks() {
     this.logger.debug('Checking for overdue tasks...');
     
-    // TODO: Implement overdue tasks checking logic
-    // 1. Find all tasks that are overdue (due date is in the past)
-    // 2. Add them to the task processing queue
-    // 3. Log the number of overdue tasks found
-    
-    // Example implementation (incomplete - to be implemented by candidates)
     const now = new Date();
-    const overdueTasks = await this.tasksRepository.find({
+    
+    // Efficiently count total overdue tasks first
+    const totalOverdueTasks = await this.tasksRepository.count({
       where: {
         dueDate: LessThan(now),
         status: TaskStatus.PENDING,
       },
     });
     
-    this.logger.log(`Found ${overdueTasks.length} overdue tasks`);
+    if (totalOverdueTasks === 0) {
+      this.logger.log('No overdue tasks found');
+      return;
+    }
     
-    // Add tasks to the queue to be processed
-    // TODO: Implement adding tasks to the queue
+    this.logger.log(`Found ${totalOverdueTasks} overdue tasks, processing in batches`);
     
-    this.logger.debug('Overdue tasks check completed');
+    let processedCount = 0;
+    let currentPage = 0;
+    
+    // Process in batches to avoid memory issues
+    while (processedCount < totalOverdueTasks) {
+      const overdueTasks = await this.tasksRepository.find({
+        where: {
+          dueDate: LessThan(now),
+          status: TaskStatus.PENDING,
+        },
+        take: this.BATCH_SIZE,
+        skip: currentPage * this.BATCH_SIZE,
+      });
+      
+      if (overdueTasks.length === 0) {
+        break; // No more tasks to process
+      }
+      
+      // Add batch job to process all overdue tasks at once
+      await this.taskQueue.add(
+        'overdue-tasks-notification',
+        {
+          taskIds: overdueTasks.map(task => task.id),
+          totalTasks: totalOverdueTasks,
+          batchNumber: currentPage + 1,
+        },
+        {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 1000,
+          },
+        }
+      );
+      
+      processedCount += overdueTasks.length;
+      currentPage++;
+      
+      this.logger.debug(`Processed batch ${currentPage}: ${processedCount}/${totalOverdueTasks} tasks`);
+    }
+    
+    this.logger.log(`Overdue tasks check completed: ${processedCount} tasks processed`);
   }
 } 

@@ -1,15 +1,18 @@
-import { Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn, UpdateDateColumn, Index } from 'typeorm';
 import { Task } from '../../tasks/entities/task.entity';
 import { Exclude } from 'class-transformer';
+import { AVAILABLE_ROLES } from '../../auth/constants/permissions';
 
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Index({ unique: true })
   @Column({ unique: true })
   email: string;
 
+  @Index()
   @Column()
   name: string;
 
@@ -17,8 +20,21 @@ export class User {
   @Exclude({ toPlainOnly: true })
   password: string;
 
-  @Column({ default: 'user' })
+  @Index()
+  @Column({ 
+    default: 'user',
+    enum: AVAILABLE_ROLES,
+    type: 'enum' 
+  })
   role: string;
+
+  @Column({ nullable: true, type: 'varchar' })
+  @Exclude({ toPlainOnly: true })
+  resetToken: string | null;
+
+  @Column({ nullable: true, type: 'timestamp' })
+  @Exclude({ toPlainOnly: true })
+  resetTokenExpires: Date | null;
 
   @OneToMany(() => Task, (task) => task.user)
   tasks: Task[];

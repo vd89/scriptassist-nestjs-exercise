@@ -1,5 +1,10 @@
+# Bun configuration file
+
 [install]
 exact = true
 
 [test]
+# Configure Bun test runner
+testTimeout = 60000
+preload = ["./test/jest-setup.ts"]
 coverage = true 

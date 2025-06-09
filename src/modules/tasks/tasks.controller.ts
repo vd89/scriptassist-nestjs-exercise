@@ -1,19 +1,19 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, HttpException, HttpStatus, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, HttpException, HttpStatus, ValidationPipe, UsePipes, Request } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Task } from './entities/task.entity';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { TaskStatus } from './enums/task-status.enum';
 import { TaskPriority } from './enums/task-priority.enum';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
-
-// This guard needs to be implemented or imported from the correct location
-// We're intentionally leaving it as a non-working placeholder
-class JwtAuthGuard {}
+import { TaskFilterDto } from './dto/task-filter.dto';
+import { JwtAuthGuard } from '../../modules/auth/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../../modules/auth/guards/permissions.guard';
+import { RequirePermissions } from '../../modules/auth/decorators/permissions.decorator';
+import { ResourcePermission } from '../../modules/auth/constants/permissions';
+import { PaginatedResponseDto } from '../../common/dto/pagination-response.dto';
+import { Task } from './entities/task.entity';
 
 @ApiTags('tasks')
 @Controller('tasks')
@@ -22,141 +22,97 @@ class JwtAuthGuard {}
 @ApiBearerAuth()
 export class TasksController {
   constructor(
-    private readonly tasksService: TasksService,
-    // Anti-pattern: Controller directly accessing repository
-    @InjectRepository(Task)
-    private taskRepository: Repository<Task>
+    private readonly tasksService: TasksService
   ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new task' })
+  @ApiResponse({ status: 201, description: 'Task successfully created' })
+  @ApiResponse({ status: 400, description: 'Bad request' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(ResourcePermission.CREATE_TASK)
+  @UsePipes(new ValidationPipe({ transform: true }))
   create(@Body() createTaskDto: CreateTaskDto) {
     return this.tasksService.create(createTaskDto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Find all tasks with optional filtering' })
-  @ApiQuery({ name: 'status', required: false })
-  @ApiQuery({ name: 'priority', required: false })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  async findAll(
-    @Query('status') status?: string,
-    @Query('priority') priority?: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
-    // Inefficient approach: Inconsistent pagination handling
-    if (page && !limit) {
-      limit = 10; // Default limit
-    }
-    
-    // Inefficient processing: Manual filtering instead of using repository
-    let tasks = await this.tasksService.findAll();
-    
-    // Inefficient filtering: In-memory filtering instead of database filtering
-    if (status) {
-      tasks = tasks.filter(task => task.status === status as TaskStatus);
-    }
-    
-    if (priority) {
-      tasks = tasks.filter(task => task.priority === priority as TaskPriority);
-    }
-    
-    // Inefficient pagination: In-memory pagination
-    if (page && limit) {
-      const startIndex = (page - 1) * limit;
-      const endIndex = page * limit;
-      tasks = tasks.slice(startIndex, endIndex);
-    }
-    
-    return {
-      data: tasks,
-      count: tasks.length,
-      // Missing metadata for proper pagination
-    };
+  @ApiResponse({ status: 200, description: 'Tasks successfully retrieved' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(ResourcePermission.READ_TASK)
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async findAll(@Query() filterDto: TaskFilterDto, @Request() req: any): Promise<PaginatedResponseDto<Task>> {
+    return this.tasksService.findAll(filterDto, req.user);
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
+  @ApiResponse({ status: 200, description: 'Task statistics successfully retrieved' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(ResourcePermission.READ_STATISTICS)
   async getStats() {
-    // Inefficient approach: N+1 query problem
-    const tasks = await this.taskRepository.find();
-    
-    // Inefficient computation: Should be done with SQL aggregation
-    const statistics = {
-      total: tasks.length,
-      completed: tasks.filter(t => t.status === TaskStatus.COMPLETED).length,
-      inProgress: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
-      pending: tasks.filter(t => t.status === TaskStatus.PENDING).length,
-      highPriority: tasks.filter(t => t.priority === TaskPriority.HIGH).length,
-    };
-    
-    return statistics;
+    return this.tasksService.getTaskStatistics();
+  }
+
+  @Get('search/name/:name')
+  @ApiOperation({ summary: 'Find tasks by name (partial match)' })
+  @ApiResponse({ status: 200, description: 'Tasks successfully found' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(ResourcePermission.READ_TASK)
+  async findByName(@Param('name') name: string, @Request() req: any) {
+    return this.tasksService.findByName(name, req.user);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Find a task by ID' })
-  async findOne(@Param('id') id: string) {
-    const task = await this.tasksService.findOne(id);
-    
-    if (!task) {
-      // Inefficient error handling: Revealing internal details
-      throw new HttpException(`Task with ID ${id} not found in the database`, HttpStatus.NOT_FOUND);
-    }
-    
-    return task;
+  @ApiResponse({ status: 200, description: 'Task successfully found' })
+  @ApiResponse({ status: 404, description: 'Task not found' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(ResourcePermission.READ_TASK)
+  async findOne(@Param('id') id: string, @Request() req: any) {
+    return this.tasksService.findOne(id, req.user);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a task' })
-  update(@Param('id') id: string, @Body() updateTaskDto: UpdateTaskDto) {
-    // No validation if task exists before update
-    return this.tasksService.update(id, updateTaskDto);
+  @ApiResponse({ status: 200, description: 'Task successfully updated' })
+  @ApiResponse({ status: 404, description: 'Task not found' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(ResourcePermission.UPDATE_TASK)
+  @UsePipes(new ValidationPipe({ transform: true }))
+  async update(@Param('id') id: string, @Body() updateTaskDto: UpdateTaskDto, @Request() req: any) {
+    return this.tasksService.update(id, updateTaskDto, req.user);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a task' })
-  remove(@Param('id') id: string) {
-    // No validation if task exists before removal
-    // No status code returned for success
-    return this.tasksService.remove(id);
+  @ApiResponse({ status: 200, description: 'Task successfully deleted' })
+  @ApiResponse({ status: 404, description: 'Task not found' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(ResourcePermission.DELETE_TASK)
+  async remove(@Param('id') id: string, @Request() req: any) {
+    await this.tasksService.remove(id, req.user);
+    return { success: true };
   }
 
   @Post('batch')
   @ApiOperation({ summary: 'Batch process multiple tasks' })
-  async batchProcess(@Body() operations: { tasks: string[], action: string }) {
-    // Inefficient batch processing: Sequential processing instead of bulk operations
+  @ApiResponse({ status: 200, description: 'Batch processing completed' })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(ResourcePermission.UPDATE_TASK)
+  async batchProcess(@Body() operations: { tasks: string[], action: string }, @Request() req: any) {
     const { tasks: taskIds, action } = operations;
-    const results = [];
     
-    // N+1 query problem: Processing tasks one by one
-    for (const taskId of taskIds) {
-      try {
-        let result;
-        
-        switch (action) {
-          case 'complete':
-            result = await this.tasksService.update(taskId, { status: TaskStatus.COMPLETED });
-            break;
-          case 'delete':
-            result = await this.tasksService.remove(taskId);
-            break;
-          default:
-            throw new HttpException(`Unknown action: ${action}`, HttpStatus.BAD_REQUEST);
-        }
-        
-        results.push({ taskId, success: true, result });
-      } catch (error) {
-        // Inconsistent error handling
-        results.push({ 
-          taskId, 
-          success: false, 
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+      throw new HttpException('Tasks array must not be empty', HttpStatus.BAD_REQUEST);
     }
     
-    return results;
+    if (!['complete', 'delete'].includes(action)) {
+      throw new HttpException('Invalid action. Must be "complete" or "delete"', HttpStatus.BAD_REQUEST);
+    }
+    
+    return this.tasksService.batchProcessTasks(taskIds, action, req.user);
   }
 } 
