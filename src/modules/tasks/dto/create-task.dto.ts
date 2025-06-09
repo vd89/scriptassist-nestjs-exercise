@@ -1,7 +1,8 @@
-import { IsDateString, IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsDate, IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { TaskStatus } from '../enums/task-status.enum';
 import { TaskPriority } from '../enums/task-priority.enum';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateTaskDto {
   @ApiProperty({ example: 'Complete project documentation' })
@@ -25,8 +26,16 @@ export class CreateTaskDto {
   priority?: TaskPriority;
 
   @ApiProperty({ example: '2023-12-31T23:59:59Z', required: false })
-  @IsDateString()
   @IsOptional()
+  @Transform(({ value }) => {
+    if (!value) return value;
+    const date = new Date(value);
+    if (isNaN(date.getTime())) {
+      throw new Error('Invalid date format. Please provide a valid ISO 8601 date string');
+    }
+    return date;
+  })
+  @Type(() => Date)
   dueDate?: Date;
 
   @ApiProperty({ example: '123e4567-e89b-12d3-a456-426614174000' })
