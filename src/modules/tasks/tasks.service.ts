@@ -7,6 +7,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
+import { IPaginatedResult, IPaginationOptions } from './interfaces/task.interface';
 
 @Injectable()
 export class TasksService {
@@ -39,6 +40,34 @@ export class TasksService {
     return this.tasksRepository.find({
       relations: ['user'],
     });
+  }
+
+  async find(where: Record<string, any> = {}) {
+    return this.tasksRepository.find({
+      where,
+    });
+  }
+
+  async paginate(
+    where: Record<string, any>,
+    options: IPaginationOptions,
+  ): Promise<IPaginatedResult<Task>> {
+    const { page, limit } = options;
+    const skip = (page - 1) * limit;
+    const [result, total] = await this.tasksRepository.findAndCount({
+      where,
+      take: limit,
+      skip,
+    });
+    return {
+      data: result,
+      meta: {
+        total,
+        currentPage: page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async findOne(id: string): Promise<Task> {
