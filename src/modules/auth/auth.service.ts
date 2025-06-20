@@ -71,7 +71,7 @@ export class AuthService {
   }
 
   async validateUser(userId: string): Promise<any> {
-    const user = await this.usersService.findOne(userId);
+    const user = await this.usersService.findById(userId);
     
     if (!user) {
       return null;
