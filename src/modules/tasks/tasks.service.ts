@@ -7,7 +7,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
-import { IPaginatedResult, IPaginationOptions } from './interfaces/task.interface';
+import { IPaginatedResult, IPaginationOptions, ITaskStats } from './interfaces/task.interface';
 
 @Injectable()
 export class TasksService {
@@ -183,5 +183,27 @@ export class TasksService {
     const task = await this.findOne(id);
     task.status = status as any;
     return this.tasksRepository.save(task);
+  }
+
+  async getStats(): Promise<ITaskStats> {
+    const builder = this.tasksRepository.createQueryBuilder('task');
+
+    const result = await builder
+      .select([
+        'COUNT(*) AS total',
+        `COUNT(CASE WHEN task.status = 'COMPLETED' THEN 1 END) AS completed`,
+        `COUNT(CASE WHEN task.status = 'IN_PROGRESS' THEN 1 END) AS "inProgress"`,
+        `COUNT(CASE WHEN task.status = 'PENDING' THEN 1 END) AS pending`,
+        `COUNT(CASE WHEN task.priority = 'HIGH' THEN 1 END) AS "highPriority"`,
+      ])
+      .getRawOne();
+
+    return {
+      total: Number(result.total),
+      completed: Number(result.completed),
+      inProgress: Number(result.inProgress),
+      pending: Number(result.pending),
+      highPriority: Number(result.highPriority),
+    };
   }
 }
