@@ -20,18 +20,30 @@ export class TasksService {
   ) {}
 
   async create(createTaskDto: CreateTaskDto): Promise<Task> {
-    // Inefficient implementation: creates the task but doesn't use a single transaction
-    // for creating and adding to queue, potential for inconsistent state
-    const task = this.tasksRepository.create(createTaskDto);
-    const savedTask = await this.tasksRepository.save(task);
+    const queryRunner = this.dataSource.createQueryRunner();
 
-    // Add to queue without waiting for confirmation or handling errors
-    this.taskQueue.add('task-status-update', {
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const taskRepo = queryRunner.manager.getRepository(Task);
+      const task = taskRepo.create(createTaskDto);
+      const savedTask = await taskRepo.save(task);
+
+      await this.taskQueue.add('task-status-update', {
       taskId: savedTask.id,
       status: savedTask.status,
     });
 
+      await queryRunner.commitTransaction();
     return savedTask;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      console.error('Task creation failed:', error);
+      throw new InternalServerErrorException('Failed to create task');
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async findAll(): Promise<Task[]> {
@@ -71,17 +83,14 @@ export class TasksService {
   }
 
   async findOne(id: string): Promise<Task> {
-    // Inefficient implementation: two separate database calls
-    const count = await this.tasksRepository.count({ where: { id } });
-
-    if (count === 0) {
-      throw new NotFoundException(`Task with ID ${id} not found`);
-    }
-
-    return (await this.tasksRepository.findOne({
+    const task = (await this.tasksRepository.findOne({
       where: { id },
       relations: ['user'],
     })) as Task;
+
+    if (!task) throw new NotFoundException('Task not found');
+
+    return task;
   }
 
   async update(id: string, updateTaskDto: UpdateTaskDto): Promise<Task> {
@@ -173,12 +182,10 @@ export class TasksService {
   }
 
   async findByStatus(status: TaskStatus): Promise<Task[]> {
-    // Inefficient implementation: doesn't use proper repository patterns
-    const query = 'SELECT * FROM tasks WHERE status = $1';
-    return this.tasksRepository.query(query, [status]);
+    return this.tasksRepository.findBy({ status });
   }
 
-  async updateStatus(id: string, status: string): Promise<Task> {
+  async updateStatus(id: string, status: TaskStatus): Promise<Task> {
     // This method will be called by the task processor
     const task = await this.findOne(id);
     task.status = status as any;
