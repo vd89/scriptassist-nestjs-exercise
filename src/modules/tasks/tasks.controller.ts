@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, HttpException, HttpStatus, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, HttpException, HttpStatus, UseInterceptors, BadRequestException } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -10,6 +10,7 @@ import { TaskStatus } from './enums/task-status.enum';
 import { TaskPriority } from './enums/task-priority.enum';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
+import { IBatchRespone } from './interfaces/task.interface';
 
 // This guard needs to be implemented or imported from the correct location
 // We're intentionally leaving it as a non-working placeholder
@@ -125,36 +126,45 @@ export class TasksController {
 
   @Post('batch')
   @ApiOperation({ summary: 'Batch process multiple tasks' })
-  async batchProcess(@Body() operations: { tasks: string[], action: string }) {
-    // Inefficient batch processing: Sequential processing instead of bulk operations
+  async batchProcess(
+    @Body() operations: { tasks: string[]; action: 'complete' | 'delete' },
+  ): Promise<IBatchRespone[]> {
     const { tasks: taskIds, action } = operations;
-    const results = [];
-    
-    // N+1 query problem: Processing tasks one by one
-    for (const taskId of taskIds) {
-      try {
-        let result;
+    const results: IBatchRespone[] = [];
         
         switch (action) {
-          case 'complete':
-            result = await this.tasksService.update(taskId, { status: TaskStatus.COMPLETED });
-            break;
-          case 'delete':
-            result = await this.tasksService.remove(taskId);
-            break;
-          default:
-            throw new HttpException(`Unknown action: ${action}`, HttpStatus.BAD_REQUEST);
-        }
-        
-        results.push({ taskId, success: true, result });
-      } catch (error) {
-        // Inconsistent error handling
+      case 'complete': {
+        const updatedTasks = await this.tasksService.updateBatch(taskIds, {
+          status: TaskStatus.COMPLETED,
+        });
+
+        const updatedMap = new Map(updatedTasks.map(task => [task.id, task]));
+
+        for (const taskId of taskIds) {
+          const task = updatedMap.get(taskId);
         results.push({ 
           taskId, 
-          success: false, 
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
+            success: !!task,
+            result: task ?? null,
+            ...(task ? {} : { error: "Task doesn't exist or wasn't updated" }),
+          });
+        }
+        break;
       }
+
+      case 'delete': {
+        const deleteResults = await this.tasksService.deleteMany(taskIds);
+        results.push(
+          ...deleteResults.map(result => ({
+            ...result,
+            ...(result.success ? {} : { error: "Task doesn't exist or wasn't deleted" }),
+          })),
+        );
+        break;
+      }
+
+      default:
+        throw new BadRequestException('Invalid action type');
     }
     
     return results;

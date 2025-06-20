@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { Task } from './entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -15,6 +15,7 @@ export class TasksService {
     private tasksRepository: Repository<Task>,
     @InjectQueue('task-processing')
     private taskQueue: Queue,
+    private dataSource: DataSource,
   ) {}
 
   async create(createTaskDto: CreateTaskDto): Promise<Task> {
@@ -55,36 +56,91 @@ export class TasksService {
   }
 
   async update(id: string, updateTaskDto: UpdateTaskDto): Promise<Task> {
-    // Inefficient implementation: multiple database calls
-    // and no transaction handling
-    const task = await this.findOne(id);
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
+    try {
+      const taskRepo = queryRunner.manager.getRepository(Task);
+      const task = await taskRepo.findOne({ where: { id } });
+      if (!task) throw new NotFoundException('Task not found');
     const originalStatus = task.status;
+      Object.assign(task, updateTaskDto);
 
-    // Directly update each field individually
-    if (updateTaskDto.title) task.title = updateTaskDto.title;
-    if (updateTaskDto.description) task.description = updateTaskDto.description;
-    if (updateTaskDto.status) task.status = updateTaskDto.status;
-    if (updateTaskDto.priority) task.priority = updateTaskDto.priority;
-    if (updateTaskDto.dueDate) task.dueDate = updateTaskDto.dueDate;
-
-    const updatedTask = await this.tasksRepository.save(task);
-
-    // Add to queue if status changed, but without proper error handling
-    if (originalStatus !== updatedTask.status) {
-      this.taskQueue.add('task-status-update', {
+      const updatedTask = await taskRepo.save(task);
+      await queryRunner.commitTransaction();
+      if (originalStatus !== updatedTask.status)
+        await this.taskQueue.add('task-status-update', {
         taskId: updatedTask.id,
         status: updatedTask.status,
       });
-    }
 
-    return updatedTask;
+      return updatedTask;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      console.error('Update failed:', err);
+      throw new InternalServerErrorException('Task update failed');
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async updateBatch(ids: string[], payload: UpdateTaskDto): Promise<Task[]> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const taskRepo = queryRunner.manager.getRepository(Task);
+      const existingTasks = await taskRepo.findBy({ id: In(ids) });
+      const originalStatusMap = new Map<string, TaskStatus>();
+      for (const task of existingTasks) {
+        originalStatusMap.set(task.id, task.status);
+      }
+
+      await taskRepo.update({ id: In(ids) }, payload);
+      const updatedTasks = await taskRepo.findBy({ id: In(ids) });
+      const queueData = updatedTasks
+        .filter(task => originalStatusMap.get(task.id) !== payload.status)
+        .map(task => ({
+          name: 'task-status-update',
+          data: {
+            taskId: task.id,
+            status: task.status,
+          },
+        }));
+
+      if (queueData.length > 0) {
+        await this.taskQueue.addBulk(queueData);
+      }
+      await queryRunner.commitTransaction();
+      return updatedTasks;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      console.error('Batch update failed:', err);
+      throw new InternalServerErrorException('Batch update failed');
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async remove(id: string): Promise<void> {
-    // Inefficient implementation: two separate database calls
-    const task = await this.findOne(id);
-    await this.tasksRepository.remove(task);
+    const result = await this.tasksRepository.delete(id);
+    if (!result.affected) {
+      throw new NotFoundException(`Task with id ${id} not found`);
+    }
+  }
+
+  async deleteMany(ids: string[]): Promise<{ taskId: string; success: boolean }[]> {
+    const existingTasks = await this.tasksRepository.findBy({ id: In(ids) });
+    const existingIds = new Set(existingTasks.map(task => task.id));
+
+    await this.tasksRepository.delete({ id: In([...existingIds]) });
+
+    return ids.map(id => ({
+      taskId: id,
+      success: existingIds.has(id),
+    }));
   }
 
   async findByStatus(status: TaskStatus): Promise<Task[]> {
