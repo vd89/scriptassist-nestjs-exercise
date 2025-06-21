@@ -30,10 +30,20 @@ export class TasksService {
       const task = taskRepo.create(createTaskDto);
       const savedTask = await taskRepo.save(task);
 
-      await this.taskQueue.add('task-status-update', {
-        taskId: savedTask.id,
-        status: savedTask.status,
-      });
+      await this.taskQueue.add(
+        'task-status-update',
+        {
+          taskId: savedTask.id,
+          status: savedTask.status,
+        },
+        {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 5000,
+          },
+        },
+      );
 
       await queryRunner.commitTransaction();
       return savedTask;
@@ -106,10 +116,20 @@ export class TasksService {
       const updatedTask = await taskRepo.save(task);
       await queryRunner.commitTransaction();
       if (originalStatus !== updatedTask.status)
-        await this.taskQueue.add('task-status-update', {
-          taskId: updatedTask.id,
-          status: updatedTask.status,
-        });
+        await this.taskQueue.add(
+          'task-status-update',
+          {
+            taskId: updatedTask.id,
+            status: updatedTask.status,
+          },
+          {
+            attempts: 3,
+            backoff: {
+              type: 'exponential',
+              delay: 5000,
+            },
+          },
+        );
 
       return updatedTask;
     } catch (err) {
@@ -141,6 +161,13 @@ export class TasksService {
           data: {
             taskId: task.id,
             status: task.status,
+          },
+          opts: {
+            attempts: 3,
+            backoff: {
+              type: 'exponential',
+              delay: 5000,
+            },
           },
         }));
 

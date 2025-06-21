@@ -38,6 +38,13 @@ export class OverdueTasksService {
           taskId: task.id,
           statud: task.status,
         },
+        opt: {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 5000,
+          },
+        },
       }));
       await this.taskQueue.addBulk(queueData);
     }
