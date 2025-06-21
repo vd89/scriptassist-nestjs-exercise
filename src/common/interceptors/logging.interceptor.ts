@@ -1,4 +1,10 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Logger,
+} from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 
@@ -7,31 +13,54 @@ export class LoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(LoggingInterceptor.name);
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    // TODO: Implement comprehensive request/response logging
-    // This interceptor should:
-    // 1. Log incoming requests with relevant details
-    // 2. Measure and log response time
-    // 3. Log outgoing responses
-    // 4. Include contextual information like user IDs when available
-    // 5. Avoid logging sensitive information
-
     const req = context.switchToHttp().getRequest();
-    const method = req.method;
-    const url = req.url;
+    const { method, url, body, query, params, user } = req;
     const now = Date.now();
 
-    // Basic implementation (to be enhanced by candidates)
-    this.logger.log(`Request: ${method} ${url}`);
+    const userId = user?.id || 'Unknown';
+    const logPrefix = `[${method}] ${url} [User: ${userId}]`;
+
+    const filteredBody = this.filterSensitiveData(body);
+    const filteredQuery = this.filterSensitiveData(query);
+
+    this.logger.log(`${logPrefix} - Incoming request`);
+    this.logger.debug(`Body: ${JSON.stringify(filteredBody)}, Query: ${JSON.stringify(filteredQuery)}, Params: ${JSON.stringify(params)}`);
 
     return next.handle().pipe(
       tap({
-        next: (val) => {
-          this.logger.log(`Response: ${method} ${url} ${Date.now() - now}ms`);
+        next: (data) => {
+          const elapsedTime = Date.now() - now;
+          this.logger.log(`${logPrefix} - Response sent in ${elapsedTime}ms`);
+          this.logger.debug(`Response: ${JSON.stringify(this.truncateLargeFields(data))}`);
         },
         error: (err) => {
-          this.logger.error(`Error in ${method} ${url} ${Date.now() - now}ms: ${err.message}`);
+          const elapsedTime = Date.now() - now;
+          this.logger.error(`${logPrefix} - Error after ${elapsedTime}ms: ${err.message}`, err.stack);
         },
       }),
     );
   }
-} 
+
+  private filterSensitiveData(obj: any): any {
+    if (!obj || typeof obj !== 'object') return obj;
+
+    const sensitiveFields = ['password', 'access_token'];
+    return Object.keys(obj).reduce((acc: Record<string, any>, key: string) => {
+      acc[key] = sensitiveFields.includes(key.toLowerCase()) ? '[REDACTED]' : obj[key];
+      return acc;
+    }, {} as Record<string, any>);
+  }
+
+  private truncateLargeFields(data: any): any {
+    const MAX_LENGTH = 500;
+    if (!data || typeof data !== 'object') return data;
+
+    return JSON.parse(
+      JSON.stringify(data, (_, value) =>
+        typeof value === 'string' && value.length > MAX_LENGTH
+          ? `${value.substring(0, MAX_LENGTH)}... [truncated]`
+          : value
+      ),
+    );
+  }
+}
