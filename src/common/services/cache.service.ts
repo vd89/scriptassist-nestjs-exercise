@@ -4,7 +4,6 @@ import Redis from 'ioredis';
 @Injectable()
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
-
   constructor(@Inject('REDIS_CLIENT') private readonly redis: Redis) {}
 
   private buildKey(namespace: string, key: string): string {

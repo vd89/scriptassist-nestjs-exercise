@@ -1,15 +1,39 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, HttpException, HttpStatus, UseInterceptors, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Query,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { Between, ILike, LessThanOrEqual,MoreThanOrEqual, Repository } from 'typeorm';
+import {
+  Between,
+  FindOptionsWhere,
+  ILike,
+  In,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { TaskStatus } from './enums/task-status.enum';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 import { IBatchRespone } from './interfaces/task.interface';
 import { TaskFilterDto } from './dto/task-filter.dto';
 import { JwtAuthGuard } from '@modules/auth/guards/jwt-auth.guard';
+import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
+import { User } from '@modules/users/entities/user.entity';
+import { BatchTaskOperationDto } from './dto/batch-operation.dto';
+import { Task } from './entities/task.entity';
 
 @ApiTags('tasks')
 @Controller('tasks')
@@ -25,97 +49,128 @@ export class TasksController {
     return this.tasksService.create(createTaskDto);
   }
 
-@Get()
-@ApiOperation({ summary: 'Find all tasks with optional filtering' })
-@ApiQuery({ name: 'status', required: false })
-@ApiQuery({ name: 'priority', required: false })
-@ApiQuery({ name: 'page', required: false })
-@ApiQuery({ name: 'limit', required: false })
-@ApiQuery({ name: 'startDate', required: false, type: String })
-@ApiQuery({ name: 'endDate', required: false, type: String })
-@ApiQuery({ name: 'search', required: false, type: String })
-async findAll(@Query() query: TaskFilterDto) {
-  const {
-    status,
-    priority,
-    page,
-    limit,
-    start_date:startDate,
-    end_date: endDate,
-    search,
-  } = query;
+  @Get()
+  @ApiOperation({ summary: 'Find all tasks with optional filtering' })
+  @ApiQuery({ name: 'status', required: false })
+  @ApiQuery({ name: 'priority', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'startDate', required: false, type: String })
+  @ApiQuery({ name: 'endDate', required: false, type: String })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  async findAll(@Query() query: TaskFilterDto, @CurrentUser() user: User) {
+    const {
+      status,
+      priority,
+      page,
+      limit,
+      start_date: startDate,
+      end_date: endDate,
+      search,
+    } = query;
 
-  const where: Record<string, any> = {};
+    const where: Record<string, any> = {};
 
-  if (status) where.status = status;
-  if (priority) where.priority = priority;
+    if (status) where.status = status;
+    if (priority) where.priority = priority;
+    if (user.role != "admin") where.userId = user.id;
 
-  if (startDate && endDate) {
-    where.dueDate = Between(startDate, endDate);
-  } else if (startDate) {
-    where.dueDate = MoreThanOrEqual(startDate);
-  } else if (endDate) {
-    where.dueDate = LessThanOrEqual(endDate);
+    if (startDate && endDate) {
+      where.dueDate = Between(startDate, endDate);
+    } else if (startDate) {
+      where.dueDate = MoreThanOrEqual(startDate);
+    } else if (endDate) {
+      where.dueDate = LessThanOrEqual(endDate);
+    }
+
+    if (search) {
+      where.or = [{ title: ILike(`%${search}%`) }, { description: ILike(`%${search}%`) }];
+    }
+
+    return this.tasksService.paginate(where, { page, limit });
   }
-
-  if (search) {
-    where.or = [
-      { title: ILike(`%${search}%`) },
-      { description: ILike(`%${search}%`) },
-    ];
-  }
-
-  return this.tasksService.paginate(where, { page, limit });
-}
-
 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
-  async getStats() {
-    return this.tasksService.getStats();
+  async getStats(@CurrentUser() user: User) {
+    const query: Array<[string, string]> = user.role === 'admin' ? [] : [[ "userId", user.id ]];
+    return this.tasksService.getStats(query);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Find a task by ID' })
-  async findOne(@Param('id') id: string) {
-    return this.tasksService.findOne(id);
+  async findOne(@Param('id') id: string, @CurrentUser() user: User) {
+    const task = await this.tasksService.findById(id);
+    if (task.userId != user.id && user.role != 'admin')
+      throw new ForbiddenException('You are not authorized to perform this action.');
+    return this.tasksService.findById(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a task' })
-  update(@Param('id') id: string, @Body() updateTaskDto: UpdateTaskDto) {
-    // No validation if task exists before update
-    return this.tasksService.update(id, updateTaskDto);
+  async update(
+    @Param('id') id: string,
+    @Body() updateTaskDto: UpdateTaskDto,
+    @CurrentUser() user: User,
+  ) {
+    const task = await this.tasksService.findById(id);
+    if (task.userId != user.id && user.role != 'admin')
+      throw new ForbiddenException('You are not authorized to perform this action.');
+    return this.tasksService.update(task, updateTaskDto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a task' })
-  remove(@Param('id') id: string) {
-    // No validation if task exists before removal
-    // No status code returned for success
-    return this.tasksService.remove(id);
+  async remove(@Param('id') id: string, @CurrentUser() user: User) {
+    const task = await this.tasksService.findById(id);
+    if (task.userId != user.id && user.role != 'admin')
+      throw new ForbiddenException('You are not authorized to perform this action.');
+    return this.tasksService.remove(task);
   }
 
   @Post('batch')
   @ApiOperation({ summary: 'Batch process multiple tasks' })
   async batchProcess(
-    @Body() operations: { tasks: string[]; action: 'complete' | 'delete' },
+    @Body() operations: BatchTaskOperationDto,
+    @CurrentUser() user: User,
   ): Promise<IBatchRespone[]> {
     const { tasks: taskIds, action } = operations;
     const results: IBatchRespone[] = [];
-        
-        switch (action) {
-      case 'complete': {
-        const updatedTasks = await this.tasksService.updateBatch(taskIds, {
-          status: TaskStatus.COMPLETED,
-        });
 
-        const updatedMap = new Map(updatedTasks.map(task => [task.id, task]));
+    const query: FindOptionsWhere<Task> =
+      user.role === 'admin' ? { id: In(taskIds) } : { id: In(taskIds), userId: user.id };
+
+    const foundTasks = await this.tasksService.find(query);
+    const foundTaskMap = new Map(foundTasks.map(task => [task.id, task]));
+    const foundTaskIds = foundTasks.map(t => t.id);
+
+    if (foundTasks.length === 0) {
+      return taskIds.map(taskId => ({
+        taskId,
+        success: false,
+        result: null,
+        error: 'Task not found or access denied',
+      }));
+    }
+
+    switch (action) {
+      case 'complete': {
+        const originalStatusMap = new Map<string, TaskStatus>();
+        for (const task of foundTasks) {
+          originalStatusMap.set(task.id, task.status);
+        }
+        await this.tasksService.updateBatch(
+          foundTaskIds,
+          {
+            status: TaskStatus.COMPLETED,
+          },
+          originalStatusMap,
+        );
 
         for (const taskId of taskIds) {
-          const task = updatedMap.get(taskId);
-        results.push({ 
-          taskId, 
+          const task = foundTaskMap.get(taskId);
+          results.push({
+            taskId,
             success: !!task,
             result: task ?? null,
             ...(task ? {} : { error: "Task doesn't exist or wasn't updated" }),
@@ -125,20 +180,23 @@ async findAll(@Query() query: TaskFilterDto) {
       }
 
       case 'delete': {
-        const deleteResults = await this.tasksService.deleteMany(taskIds);
-        results.push(
-          ...deleteResults.map(result => ({
-            ...result,
-            ...(result.success ? {} : { error: "Task doesn't exist or wasn't deleted" }),
-          })),
-        );
+        await this.tasksService.deleteMany(foundTaskIds);
+        for (const taskId of taskIds) {
+          const task = foundTaskMap.get(taskId);
+          results.push({
+            taskId,
+            success: !!task,
+            result: task || null,
+            ...(task ? {} : { error: "Task doesn't exist or wasn't deleted" }),
+          });
+        }
         break;
       }
 
       default:
         throw new BadRequestException('Invalid action type');
     }
-    
+
     return results;
   }
-} 
+}

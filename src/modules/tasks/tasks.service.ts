@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, DeleteResult, FindOptionsWhere, In, Repository } from 'typeorm';
 import { Task } from './entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -82,7 +82,7 @@ export class TasksService {
     };
   }
 
-  async findOne(id: string): Promise<Task> {
+  async findById(id: string): Promise<Task> {
     const task = (await this.tasksRepository.findOne({
       where: { id },
       relations: ['user'],
@@ -93,15 +93,13 @@ export class TasksService {
     return task;
   }
 
-  async update(id: string, updateTaskDto: UpdateTaskDto): Promise<Task> {
+  async update(task: Task, updateTaskDto: UpdateTaskDto): Promise<Task> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
       const taskRepo = queryRunner.manager.getRepository(Task);
-      const task = await taskRepo.findOne({ where: { id } });
-      if (!task) throw new NotFoundException('Task not found');
       const originalStatus = task.status;
       Object.assign(task, updateTaskDto);
 
@@ -123,19 +121,17 @@ export class TasksService {
     }
   }
 
-  async updateBatch(ids: string[], payload: UpdateTaskDto): Promise<Task[]> {
+  async updateBatch(
+    ids: string[],
+    payload: UpdateTaskDto,
+    originalStatusMap: Map<string, TaskStatus>,
+  ): Promise<Task[]> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
       const taskRepo = queryRunner.manager.getRepository(Task);
-      const existingTasks = await taskRepo.findBy({ id: In(ids) });
-      const originalStatusMap = new Map<string, TaskStatus>();
-      for (const task of existingTasks) {
-        originalStatusMap.set(task.id, task.status);
-      }
-
       await taskRepo.update({ id: In(ids) }, payload);
       const updatedTasks = await taskRepo.findBy({ id: In(ids) });
       const queueData = updatedTasks
@@ -162,23 +158,12 @@ export class TasksService {
     }
   }
 
-  async remove(id: string): Promise<void> {
-    const result = await this.tasksRepository.delete(id);
-    if (!result.affected) {
-      throw new NotFoundException(`Task with id ${id} not found`);
-    }
+  async remove(task: Task): Promise<DeleteResult> {
+    return this.tasksRepository.delete(task);
   }
 
-  async deleteMany(ids: string[]): Promise<{ taskId: string; success: boolean }[]> {
-    const existingTasks = await this.tasksRepository.findBy({ id: In(ids) });
-    const existingIds = new Set(existingTasks.map(task => task.id));
-
-    await this.tasksRepository.delete({ id: In([...existingIds]) });
-
-    return ids.map(id => ({
-      taskId: id,
-      success: existingIds.has(id),
-    }));
+  async deleteMany(ids: string[]): Promise<DeleteResult> {
+    return this.tasksRepository.delete({ id: In(ids) });
   }
 
   async findByStatus(status: TaskStatus): Promise<Task[]> {
@@ -187,22 +172,34 @@ export class TasksService {
 
   async updateStatus(id: string, status: TaskStatus): Promise<Task> {
     // This method will be called by the task processor
-    const task = await this.findOne(id);
+    const task = await this.findById(id);
     task.status = status;
     return this.tasksRepository.save(task);
   }
 
-  async getStats(): Promise<ITaskStats> {
+  async getStats(queryParams: Array<[string, string]>): Promise<ITaskStats> {
     const builder = this.tasksRepository.createQueryBuilder('task');
+
+    const whereClauses: string[] = [];
+    const parameters: Record<string, string> = {};
+
+    queryParams.forEach(([key, value], index) => {
+      const paramKey = `param_${index}`;
+      whereClauses.push(`task.${key} = :${paramKey}`);
+      parameters[paramKey] = value;
+    });
+
+    const whereSql = whereClauses.length ? 'AND ' + whereClauses.join(' AND ') : '';
 
     const result = await builder
       .select([
-        'COUNT(*) AS total',
-        `COUNT(CASE WHEN task.status = 'COMPLETED' THEN 1 END) AS completed`,
-        `COUNT(CASE WHEN task.status = 'IN_PROGRESS' THEN 1 END) AS "inProgress"`,
-        `COUNT(CASE WHEN task.status = 'PENDING' THEN 1 END) AS pending`,
-        `COUNT(CASE WHEN task.priority = 'HIGH' THEN 1 END) AS "highPriority"`,
+        `COUNT(CASE WHEN 1=1 ${whereSql} THEN 1 END) AS total`,
+        `COUNT(CASE WHEN task.status = 'COMPLETED' ${whereSql} THEN 1 END) AS completed`,
+        `COUNT(CASE WHEN task.status = 'IN_PROGRESS' ${whereSql} THEN 1 END) AS "inProgress"`,
+        `COUNT(CASE WHEN task.status = 'PENDING' ${whereSql} THEN 1 END) AS pending`,
+        `COUNT(CASE WHEN task.priority = 'HIGH' ${whereSql} THEN 1 END) AS "highPriority"`,
       ])
+      .setParameters(parameters)
       .getRawOne();
 
     return {
