@@ -10,6 +10,7 @@ import {
   Query,
   BadRequestException,
   ForbiddenException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -22,7 +23,6 @@ import {
   In,
   LessThanOrEqual,
   MoreThanOrEqual,
-  Repository,
 } from 'typeorm';
 import { TaskStatus } from './enums/task-status.enum';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
@@ -125,7 +125,7 @@ export class TasksController {
     const task = await this.tasksService.findById(id);
     if (task.userId != user.id && user.role != 'admin')
       throw new ForbiddenException('You are not authorized to perform this action.');
-    return this.tasksService.remove(task);
+     return this.tasksService.remove(task.id); 
   }
 
   @Post('batch')
@@ -159,16 +159,16 @@ export class TasksController {
         for (const task of foundTasks) {
           originalStatusMap.set(task.id, task.status);
         }
-        await this.tasksService.updateBatch(
+        const updatedTasks = await this.tasksService.updateBatch(
           foundTaskIds,
           {
             status: TaskStatus.COMPLETED,
           },
           originalStatusMap,
         );
-
+        const updatedTasksMap = new Map(updatedTasks.map(task => [task.id, task]));
         for (const taskId of taskIds) {
-          const task = foundTaskMap.get(taskId);
+          const task = updatedTasksMap.get(taskId);
           results.push({
             taskId,
             success: !!task,

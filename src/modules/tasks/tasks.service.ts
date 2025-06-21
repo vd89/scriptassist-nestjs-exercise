@@ -158,8 +158,8 @@ export class TasksService {
     }
   }
 
-  async remove(task: Task): Promise<DeleteResult> {
-    return this.tasksRepository.delete(task);
+  async remove(id: string): Promise<DeleteResult> {
+    return this.tasksRepository.delete(id);
   }
 
   async deleteMany(ids: string[]): Promise<DeleteResult> {
