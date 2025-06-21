@@ -31,12 +31,12 @@ export class TasksService {
       const savedTask = await taskRepo.save(task);
 
       await this.taskQueue.add('task-status-update', {
-      taskId: savedTask.id,
-      status: savedTask.status,
-    });
+        taskId: savedTask.id,
+        status: savedTask.status,
+      });
 
       await queryRunner.commitTransaction();
-    return savedTask;
+      return savedTask;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       console.error('Task creation failed:', error);
@@ -102,16 +102,16 @@ export class TasksService {
       const taskRepo = queryRunner.manager.getRepository(Task);
       const task = await taskRepo.findOne({ where: { id } });
       if (!task) throw new NotFoundException('Task not found');
-    const originalStatus = task.status;
+      const originalStatus = task.status;
       Object.assign(task, updateTaskDto);
 
       const updatedTask = await taskRepo.save(task);
       await queryRunner.commitTransaction();
       if (originalStatus !== updatedTask.status)
         await this.taskQueue.add('task-status-update', {
-        taskId: updatedTask.id,
-        status: updatedTask.status,
-      });
+          taskId: updatedTask.id,
+          status: updatedTask.status,
+        });
 
       return updatedTask;
     } catch (err) {
@@ -188,7 +188,7 @@ export class TasksService {
   async updateStatus(id: string, status: TaskStatus): Promise<Task> {
     // This method will be called by the task processor
     const task = await this.findOne(id);
-    task.status = status as any;
+    task.status = status;
     return this.tasksRepository.save(task);
   }
 

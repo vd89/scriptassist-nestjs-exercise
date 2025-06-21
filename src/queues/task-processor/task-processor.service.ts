@@ -32,11 +32,10 @@ export class TaskProcessorService extends WorkerHost {
           return { success: false, error: 'Unknown job type' };
       }
     } catch (error) {
-      // Basic error logging without proper handling or retries
       this.logger.error(
         `Error processing job ${job.id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
-      throw error; // Simply rethrows the error without any retry strategy
+      throw error;
     }
   }
 
@@ -51,9 +50,6 @@ export class TaskProcessorService extends WorkerHost {
         this.logger.warn(`Invalid job status: ${status}`);
         return { success: false, error: 'Invalid status value' };
       }
-      // Inefficient: No validation of status values
-      // No transaction handling
-      // No retry mechanism
       const task = await this.tasksService.updateStatus(taskId, status);
 
       return {
