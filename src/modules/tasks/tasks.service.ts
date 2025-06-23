@@ -32,12 +32,34 @@ export class TasksService {
     return savedTask;
   }
 
-  async findAll(): Promise<Task[]> {
-    // Inefficient implementation: retrieves all tasks without pagination
-    // and loads all relations, causing potential performance issues
-    return this.tasksRepository.find({
-      relations: ['user'],
-    });
+  async findAll(
+    status?: string,
+    priority?: string,
+    page = 1,
+    limit = 10
+  ): Promise<{ data: Task[]; count: number; total: number; page: number; limit: number }> {
+    const query = this.tasksRepository.createQueryBuilder('task');
+    query.leftJoinAndSelect('task.user', 'user');
+
+    if (status) {
+      query.andWhere('task.status = :status', { status });
+    }
+    if (priority) {
+      query.andWhere('task.priority = :priority', { priority });
+    }
+
+    const [data, total] = await query
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data,
+      count: data.length,
+      total,
+      page,
+      limit,
+    };
   }
 
   async findOne(id: string): Promise<Task> {
