@@ -1,4 +1,17 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, HttpException, HttpStatus, UseInterceptors } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Query,
+  HttpException,
+  HttpStatus,
+  UseInterceptors,
+} from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -21,12 +34,7 @@ class JwtAuthGuard {}
 @RateLimit({ limit: 100, windowMs: 60000 })
 @ApiBearerAuth()
 export class TasksController {
-  constructor(
-    private readonly tasksService: TasksService,
-    // Anti-pattern: Controller directly accessing repository
-    @InjectRepository(Task)
-    private taskRepository: Repository<Task>
-  ) {}
+  constructor(private readonly tasksService: TasksService) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new task' })
@@ -43,56 +51,19 @@ export class TasksController {
   async findAll(
     @Query('status') status?: string,
     @Query('priority') priority?: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
   ) {
-    // Inefficient approach: Inconsistent pagination handling
-    if (page && !limit) {
-      limit = 10; // Default limit
-    }
-    
-    // Inefficient processing: Manual filtering instead of using repository
-    let tasks = await this.tasksService.findAll();
-    
-    // Inefficient filtering: In-memory filtering instead of database filtering
-    if (status) {
-      tasks = tasks.filter(task => task.status === status as TaskStatus);
-    }
-    
-    if (priority) {
-      tasks = tasks.filter(task => task.priority === priority as TaskPriority);
-    }
-    
-    // Inefficient pagination: In-memory pagination
-    if (page && limit) {
-      const startIndex = (page - 1) * limit;
-      const endIndex = page * limit;
-      tasks = tasks.slice(startIndex, endIndex);
-    }
-    
-    return {
-      data: tasks,
-      count: tasks.length,
-      // Missing metadata for proper pagination
-    };
+    // Use service for DB-side filtering and pagination
+    return this.tasksService.findAll(status, priority, Number(page), Number(limit));
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
   async getStats() {
-    // Inefficient approach: N+1 query problem
-    const tasks = await this.taskRepository.find();
-    
-    // Inefficient computation: Should be done with SQL aggregation
-    const statistics = {
-      total: tasks.length,
-      completed: tasks.filter(t => t.status === TaskStatus.COMPLETED).length,
-      inProgress: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
-      pending: tasks.filter(t => t.status === TaskStatus.PENDING).length,
-      highPriority: tasks.filter(t => t.priority === TaskPriority.HIGH).length,
-    };
-    
-    return statistics;
+    // TODO: Refactor this method to use service for aggregation
+    // Placeholder: return not implemented
+    throw new HttpException('Not implemented', HttpStatus.NOT_IMPLEMENTED);
   }
 
   @Get(':id')
