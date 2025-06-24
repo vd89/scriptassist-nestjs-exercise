@@ -16,14 +16,7 @@ import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import {
-  Between,
-  FindOptionsWhere,
-  ILike,
-  In,
-  LessThanOrEqual,
-  MoreThanOrEqual,
-} from 'typeorm';
+import { Between, FindOptionsWhere, ILike, In, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { TaskStatus } from './enums/task-status.enum';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
@@ -73,7 +66,7 @@ export class TasksController {
 
     if (status) where.status = status;
     if (priority) where.priority = priority;
-    if (user.role != "admin") where.userId = user.id;
+    if (user.role != 'admin') where.userId = user.id;
 
     if (startDate && endDate) {
       where.dueDate = Between(startDate, endDate);
@@ -93,7 +86,7 @@ export class TasksController {
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
   async getStats(@CurrentUser() user: User) {
-    const query: Array<[string, string]> = user.role === 'admin' ? [] : [[ "userId", user.id ]];
+    const query: Array<[string, string]> = user.role === 'admin' ? [] : [['userId', user.id]];
     return this.tasksService.getStats(query);
   }
 
@@ -125,7 +118,7 @@ export class TasksController {
     const task = await this.tasksService.findById(id);
     if (task.userId != user.id && user.role != 'admin')
       throw new ForbiddenException('You are not authorized to perform this action.');
-     return this.tasksService.remove(task.id); 
+    return this.tasksService.remove(task.id);
   }
 
   @Post('batch')

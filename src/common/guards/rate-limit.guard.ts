@@ -9,22 +9,25 @@ import {
 import { Reflector } from '@nestjs/core';
 import { CacheService } from '@common/services/cache.service';
 import { RATE_LIMIT_KEY } from '@common/decorators/rate-limit.decorator';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
-  constructor(private reflector: Reflector, private cache: CacheService) {}
+  constructor(
+    private reflector: Reflector,
+    private cache: CacheService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const ip = request.ip;
 
     const handler = context.getHandler();
-    const limitConfig =
-      this.reflector.get<{ limit: number; windowMs: number }>(
-        RATE_LIMIT_KEY,
-        handler,
-      ) || { limit: 100, windowMs: 60_000 };
-
+    const targetClass = context.getClass();
+    const limitConfig = this.reflector.getAllAndOverride<{ limit: number; windowMs: number }>(
+      RATE_LIMIT_KEY,
+      [handler, targetClass],
+    );
     return this.handleRateLimit(ip, limitConfig.limit, limitConfig.windowMs);
   }
 
@@ -34,10 +37,10 @@ export class RateLimitGuard implements CanActivate {
     windowMs: number,
   ): Promise<boolean> {
     const now = Date.now();
-
-    const requestCount = await this.cache.get<number>('ratelimit', ip);
+    const maskedIp = this.hashIp(ip);
+    const requestCount = await this.cache.get<number>('ratelimit', maskedIp);
     if (requestCount && requestCount >= maxRequests) {
-      const ttl = await this.cache.getTTL('ratelimit', ip);
+      const ttl = await this.cache.getTTL('ratelimit', maskedIp);
       throw new HttpException(
         {
           status: HttpStatus.TOO_MANY_REQUESTS,
@@ -55,11 +58,15 @@ export class RateLimitGuard implements CanActivate {
     }
 
     if (requestCount) {
-      await this.cache.increment('ratelimit', ip);
+      await this.cache.increment('ratelimit', maskedIp);
     } else {
-      await this.cache.set('ratelimit', ip, 1, windowMs / 1000);
+      await this.cache.set('ratelimit', maskedIp, 1, windowMs / 1000);
     }
 
     return true;
+  }
+
+  private hashIp(ip: string): string {
+    return crypto.createHash('sha256').update(ip).digest('hex');
   }
 }
