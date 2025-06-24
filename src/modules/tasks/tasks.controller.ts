@@ -10,7 +10,7 @@ import {
   Query,
   BadRequestException,
   ForbiddenException,
-  InternalServerErrorException,
+  UseInterceptors,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -27,11 +27,14 @@ import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { User } from '@modules/users/entities/user.entity';
 import { BatchTaskOperationDto } from './dto/batch-operation.dto';
 import { Task } from './entities/task.entity';
+import { CacheInterceptor } from '@common/interceptors/cache.interceptor';
+import { Cache } from '@common/decorators/cache.decorator';
 
 @ApiTags('tasks')
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RateLimitGuard)
 @RateLimit({ limit: 100, windowMs: 60000 })
+@UseInterceptors(CacheInterceptor)
 @ApiBearerAuth()
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
@@ -43,6 +46,7 @@ export class TasksController {
   }
 
   @Get()
+  @Cache({ namespace: 'tasks', key: ({ user }) => user.id, expireIn: 300 })
   @ApiOperation({ summary: 'Find all tasks with optional filtering' })
   @ApiQuery({ name: 'status', required: false })
   @ApiQuery({ name: 'priority', required: false })
