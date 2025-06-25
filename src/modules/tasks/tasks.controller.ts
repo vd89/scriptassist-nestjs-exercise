@@ -4,7 +4,6 @@ import {
   Post,
   Body,
   Patch,
-  Param,
   Delete,
   UseGuards,
   Query,
@@ -15,7 +14,15 @@ import {
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Between, FindOptionsWhere, ILike, In, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { TaskStatus } from './enums/task-status.enum';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
@@ -29,8 +36,10 @@ import { BatchTaskOperationDto } from './dto/batch-operation.dto';
 import { Task } from './entities/task.entity';
 import { CacheInterceptor } from '@common/interceptors/cache.interceptor';
 import { Cache } from '@common/decorators/cache.decorator';
+import { IdParam } from '@common/decorators/id-param.decorator';
+import { ITaskStats } from './interfaces/task.interface';
 
-@ApiTags('tasks')
+@ApiTags('Tasks')
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RateLimitGuard)
 @RateLimit({ limit: 100, windowMs: 60000 })
@@ -41,20 +50,16 @@ export class TasksController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new task' })
+  @ApiBody({ type: CreateTaskDto })
+  @ApiResponse({ status: 201, description: 'Task successfully created', type: Task })
   create(@Body() createTaskDto: CreateTaskDto) {
     return this.tasksService.create(createTaskDto);
   }
 
   @Get()
   @Cache({ namespace: 'tasks', key: ({ user }) => user.id, expireIn: 300 })
-  @ApiOperation({ summary: 'Find all tasks with optional filtering' })
-  @ApiQuery({ name: 'status', required: false })
-  @ApiQuery({ name: 'priority', required: false })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'limit', required: false })
-  @ApiQuery({ name: 'startDate', required: false, type: String })
-  @ApiQuery({ name: 'endDate', required: false, type: String })
-  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiOperation({ summary: 'List tasks with filters and pagination' })
+  @ApiQuery({ type: TaskFilterDto })
   async findAll(@Query() query: TaskFilterDto, @CurrentUser() user: User) {
     const {
       status,
@@ -67,18 +72,12 @@ export class TasksController {
     } = query;
 
     const where: Record<string, any> = {};
-
     if (status) where.status = status;
     if (priority) where.priority = priority;
-    if (user.role != 'admin') where.userId = user.id;
-
-    if (startDate && endDate) {
-      where.dueDate = Between(startDate, endDate);
-    } else if (startDate) {
-      where.dueDate = MoreThanOrEqual(startDate);
-    } else if (endDate) {
-      where.dueDate = LessThanOrEqual(endDate);
-    }
+    if (user.role !== 'admin') where.userId = user.id;
+    if (startDate && endDate) where.dueDate = Between(startDate, endDate);
+    else if (startDate) where.dueDate = MoreThanOrEqual(startDate);
+    else if (endDate) where.dueDate = LessThanOrEqual(endDate);
 
     if (search) {
       where.or = [{ title: ILike(`%${search}%`) }, { description: ILike(`%${search}%`) }];
@@ -88,45 +87,65 @@ export class TasksController {
   }
 
   @Get('stats')
-  @ApiOperation({ summary: 'Get task statistics' })
+  @ApiOperation({ summary: 'Get task statistics for current user or admin' })
+  @ApiResponse({ status: 200, description: 'Task statistics' })
   async getStats(@CurrentUser() user: User) {
     const query: Array<[string, string]> = user.role === 'admin' ? [] : [['userId', user.id]];
     return this.tasksService.getStats(query);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Find a task by ID' })
-  async findOne(@Param('id') id: string, @CurrentUser() user: User) {
+  @ApiOperation({ summary: 'Get a single task by ID' })
+  @ApiParam({ name: 'id', description: 'Task ID', type: String })
+  @ApiResponse({ status: 200, description: 'The task', type: Task })
+  @ApiResponse({ status: 403, description: 'Forbidden: Unauthorized access' })
+  async findOne(@IdParam('id') id: string, @CurrentUser() user: User) {
     const task = await this.tasksService.findById(id);
-    if (task.userId != user.id && user.role != 'admin')
+    if (task.userId !== user.id && user.role !== 'admin') {
       throw new ForbiddenException('You are not authorized to perform this action.');
+    }
     return this.tasksService.findById(id);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update a task' })
+  @ApiOperation({ summary: 'Update a task by ID' })
+  @ApiParam({ name: 'id', description: 'Task ID', type: String })
+  @ApiBody({ type: UpdateTaskDto })
+  @ApiResponse({ status: 200, description: 'Task updated successfully', type: Task })
+  @ApiResponse({ status: 403, description: 'Forbidden: Unauthorized access' })
   async update(
-    @Param('id') id: string,
+    @IdParam('id') id: string,
     @Body() updateTaskDto: UpdateTaskDto,
     @CurrentUser() user: User,
   ) {
     const task = await this.tasksService.findById(id);
-    if (task.userId != user.id && user.role != 'admin')
+    if (task.userId !== user.id && user.role !== 'admin') {
       throw new ForbiddenException('You are not authorized to perform this action.');
+    }
     return this.tasksService.update(task, updateTaskDto);
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete a task' })
-  async remove(@Param('id') id: string, @CurrentUser() user: User) {
+  @ApiOperation({ summary: 'Delete a task by ID' })
+  @ApiParam({ name: 'id', description: 'Task ID', type: String })
+  @ApiResponse({ status: 200, description: 'Task deleted successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden: Unauthorized access' })
+  async remove(@IdParam('id') id: string, @CurrentUser() user: User) {
     const task = await this.tasksService.findById(id);
-    if (task.userId != user.id && user.role != 'admin')
+    if (task.userId !== user.id && user.role !== 'admin') {
       throw new ForbiddenException('You are not authorized to perform this action.');
+    }
     return this.tasksService.remove(task.id);
   }
 
   @Post('batch')
-  @ApiOperation({ summary: 'Batch process multiple tasks' })
+  @ApiOperation({ summary: 'Perform batch actions on multiple tasks' })
+  @ApiBody({
+    type: BatchTaskOperationDto,
+    description: 'List of task IDs and action type (complete/delete)',
+  })
+  @ApiResponse({ status: 200, description: 'Batch operation results', type: [Object] })
+  @ApiResponse({ status: 400, description: 'Invalid action type' })
   async batchProcess(
     @Body() operations: BatchTaskOperationDto,
     @CurrentUser() user: User,
@@ -158,9 +177,7 @@ export class TasksController {
         }
         const updatedTasks = await this.tasksService.updateBatch(
           foundTaskIds,
-          {
-            status: TaskStatus.COMPLETED,
-          },
+          { status: TaskStatus.COMPLETED },
           originalStatusMap,
         );
         const updatedTasksMap = new Map(updatedTasks.map(task => [task.id, task]));
