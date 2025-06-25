@@ -1,8 +1,9 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ApiTags } from '@nestjs/swagger';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -18,4 +19,12 @@ export class AuthController {
   register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
-} 
+
+  @Post('refresh-token')
+  exchangeRefreshToken(@Body() dto: RefreshTokenDto) {
+    return this.authService.exchangeRefreshToken(dto.token);
+  }
+
+  @Patch('refresh-token/blacklist')
+  blacklistRefreshToken(@Body() dto: RefreshTokenDto) {}
+}
