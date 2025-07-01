@@ -1,12 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, DeleteResult, FindOptionsWhere, In, Repository } from 'typeorm';
 import { Task } from './entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { TaskStatus } from './enums/task-status.enum';
+import { IPaginatedResult, IPaginationOptions, ITaskStats } from './interfaces/task.interface';
 
 @Injectable()
 export class TasksService {
@@ -15,21 +16,44 @@ export class TasksService {
     private tasksRepository: Repository<Task>,
     @InjectQueue('task-processing')
     private taskQueue: Queue,
+    private dataSource: DataSource,
   ) {}
 
   async create(createTaskDto: CreateTaskDto): Promise<Task> {
-    // Inefficient implementation: creates the task but doesn't use a single transaction
-    // for creating and adding to queue, potential for inconsistent state
-    const task = this.tasksRepository.create(createTaskDto);
-    const savedTask = await this.tasksRepository.save(task);
+    const queryRunner = this.dataSource.createQueryRunner();
 
-    // Add to queue without waiting for confirmation or handling errors
-    this.taskQueue.add('task-status-update', {
-      taskId: savedTask.id,
-      status: savedTask.status,
-    });
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    return savedTask;
+    try {
+      const taskRepo = queryRunner.manager.getRepository(Task);
+      const task = taskRepo.create(createTaskDto);
+      const savedTask = await taskRepo.save(task);
+
+      await this.taskQueue.add(
+        'task-status-update',
+        {
+          taskId: savedTask.id,
+          status: savedTask.status,
+        },
+        {
+          attempts: 3,
+          backoff: {
+            type: 'exponential',
+            delay: 5000,
+          },
+        },
+      );
+
+      await queryRunner.commitTransaction();
+      return savedTask;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      console.error('Task creation failed:', error);
+      throw new InternalServerErrorException('Failed to create task');
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async findAll(): Promise<Task[]> {
@@ -40,63 +64,177 @@ export class TasksService {
     });
   }
 
-  async findOne(id: string): Promise<Task> {
-    // Inefficient implementation: two separate database calls
-    const count = await this.tasksRepository.count({ where: { id } });
+  async find(where: Record<string, any> = {}) {
+    return this.tasksRepository.find({
+      where,
+    });
+  }
 
-    if (count === 0) {
-      throw new NotFoundException(`Task with ID ${id} not found`);
-    }
+  async paginate(
+    where: Record<string, any>,
+    options: IPaginationOptions,
+  ): Promise<IPaginatedResult<Task>> {
+    const { page, limit } = options;
+    const skip = (page - 1) * limit;
+    const [result, total] = await this.tasksRepository.findAndCount({
+      where,
+      take: limit,
+      skip,
+    });
+    return {
+      data: result,
+      meta: {
+        total,
+        currentPage: page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
 
-    return (await this.tasksRepository.findOne({
+  async findById(id: string): Promise<Task> {
+    const task = (await this.tasksRepository.findOne({
       where: { id },
       relations: ['user'],
     })) as Task;
+
+    if (!task) throw new NotFoundException('Task not found');
+
+    return task;
   }
 
-  async update(id: string, updateTaskDto: UpdateTaskDto): Promise<Task> {
-    // Inefficient implementation: multiple database calls
-    // and no transaction handling
-    const task = await this.findOne(id);
+  async update(task: Task, updateTaskDto: UpdateTaskDto): Promise<Task> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    const originalStatus = task.status;
+    try {
+      const taskRepo = queryRunner.manager.getRepository(Task);
+      const originalStatus = task.status;
+      Object.assign(task, updateTaskDto);
 
-    // Directly update each field individually
-    if (updateTaskDto.title) task.title = updateTaskDto.title;
-    if (updateTaskDto.description) task.description = updateTaskDto.description;
-    if (updateTaskDto.status) task.status = updateTaskDto.status;
-    if (updateTaskDto.priority) task.priority = updateTaskDto.priority;
-    if (updateTaskDto.dueDate) task.dueDate = updateTaskDto.dueDate;
+      const updatedTask = await taskRepo.save(task);
+      await queryRunner.commitTransaction();
+      if (originalStatus !== updatedTask.status)
+        await this.taskQueue.add(
+          'task-status-update',
+          {
+            taskId: updatedTask.id,
+            status: updatedTask.status,
+          },
+          {
+            attempts: 3,
+            backoff: {
+              type: 'exponential',
+              delay: 5000,
+            },
+          },
+        );
 
-    const updatedTask = await this.tasksRepository.save(task);
-
-    // Add to queue if status changed, but without proper error handling
-    if (originalStatus !== updatedTask.status) {
-      this.taskQueue.add('task-status-update', {
-        taskId: updatedTask.id,
-        status: updatedTask.status,
-      });
+      return updatedTask;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      console.error('Update failed:', err);
+      throw new InternalServerErrorException('Task update failed');
+    } finally {
+      await queryRunner.release();
     }
-
-    return updatedTask;
   }
 
-  async remove(id: string): Promise<void> {
-    // Inefficient implementation: two separate database calls
-    const task = await this.findOne(id);
-    await this.tasksRepository.remove(task);
+  async updateBatch(
+    ids: string[],
+    payload: UpdateTaskDto,
+    originalStatusMap: Map<string, TaskStatus>,
+  ): Promise<Task[]> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const taskRepo = queryRunner.manager.getRepository(Task);
+      await taskRepo.update({ id: In(ids) }, payload);
+      const updatedTasks = await taskRepo.findBy({ id: In(ids) });
+      const queueData = updatedTasks
+        .filter(task => originalStatusMap.get(task.id) !== payload.status)
+        .map(task => ({
+          name: 'task-status-update',
+          data: {
+            taskId: task.id,
+            status: task.status,
+          },
+          opts: {
+            attempts: 3,
+            backoff: {
+              type: 'exponential',
+              delay: 5000,
+            },
+          },
+        }));
+
+      if (queueData.length > 0) {
+        await this.taskQueue.addBulk(queueData);
+      }
+      await queryRunner.commitTransaction();
+      return updatedTasks;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      console.error('Batch update failed:', err);
+      throw new InternalServerErrorException('Batch update failed');
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async remove(id: string): Promise<DeleteResult> {
+    return this.tasksRepository.delete(id);
+  }
+
+  async deleteMany(ids: string[]): Promise<DeleteResult> {
+    return this.tasksRepository.delete({ id: In(ids) });
   }
 
   async findByStatus(status: TaskStatus): Promise<Task[]> {
-    // Inefficient implementation: doesn't use proper repository patterns
-    const query = 'SELECT * FROM tasks WHERE status = $1';
-    return this.tasksRepository.query(query, [status]);
+    return this.tasksRepository.findBy({ status });
   }
 
-  async updateStatus(id: string, status: string): Promise<Task> {
+  async updateStatus(id: string, status: TaskStatus): Promise<Task> {
     // This method will be called by the task processor
-    const task = await this.findOne(id);
-    task.status = status as any;
+    const task = await this.findById(id);
+    task.status = status;
     return this.tasksRepository.save(task);
+  }
+
+  async getStats(queryParams: Array<[string, string]>): Promise<ITaskStats> {
+    const builder = this.tasksRepository.createQueryBuilder('task');
+
+    const whereClauses: string[] = [];
+    const parameters: Record<string, string> = {};
+
+    queryParams.forEach(([key, value], index) => {
+      const paramKey = `param_${index}`;
+      whereClauses.push(`task.${key} = :${paramKey}`);
+      parameters[paramKey] = value;
+    });
+
+    const whereSql = whereClauses.length ? 'AND ' + whereClauses.join(' AND ') : '';
+
+    const result = await builder
+      .select([
+        `COUNT(CASE WHEN 1=1 ${whereSql} THEN 1 END) AS total`,
+        `COUNT(CASE WHEN task.status = 'COMPLETED' ${whereSql} THEN 1 END) AS completed`,
+        `COUNT(CASE WHEN task.status = 'IN_PROGRESS' ${whereSql} THEN 1 END) AS "inProgress"`,
+        `COUNT(CASE WHEN task.status = 'PENDING' ${whereSql} THEN 1 END) AS pending`,
+        `COUNT(CASE WHEN task.priority = 'HIGH' ${whereSql} THEN 1 END) AS "highPriority"`,
+      ])
+      .setParameters(parameters)
+      .getRawOne();
+
+    return {
+      total: Number(result.total),
+      completed: Number(result.completed),
+      inProgress: Number(result.inProgress),
+      pending: Number(result.pending),
+      highPriority: Number(result.highPriority),
+    };
   }
 }

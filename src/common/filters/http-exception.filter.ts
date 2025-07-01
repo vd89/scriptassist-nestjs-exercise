@@ -1,36 +1,37 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, Logger } from '@nestjs/common';
-import { Request, Response } from 'express';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+} from '@nestjs/common';
+import { Response } from 'express';
 
 @Catch(HttpException)
 export class HttpExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(HttpExceptionFilter.name);
-
   catch(exception: HttpException, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
     const status = exception.getStatus();
-    const exceptionResponse = exception.getResponse();
+    const exceptionResponse = exception.getResponse() as any;
 
-    // TODO: Implement comprehensive error handling
-    // This filter should:
-    // 1. Log errors appropriately based on their severity
-    // 2. Format error responses in a consistent way
-    // 3. Include relevant error details without exposing sensitive information
-    // 4. Handle different types of errors with appropriate status codes
+    let responseBody: any;
 
-    this.logger.error(
-      `HTTP Exception: ${exception.message}`,
-      exception.stack,
-    );
+    if (
+      typeof exceptionResponse === 'object' &&
+      exceptionResponse.hasOwnProperty('statusCode')
+    ) {
+      responseBody = {
+        ...exceptionResponse,
+        status_code: exceptionResponse['statusCode'],
+      };
+      delete responseBody['statusCode'];
+    } else {
+      responseBody = {
+        status_code: status,
+        error: exceptionResponse,
+      };
+    }
 
-    // Basic implementation (to be enhanced by candidates)
-    response.status(status).json({
-      success: false,
-      statusCode: status,
-      message: exception.message,
-      path: request.url,
-      timestamp: new Date().toISOString(),
-    });
+    response.status(status).send(responseBody);
   }
-} 
+}

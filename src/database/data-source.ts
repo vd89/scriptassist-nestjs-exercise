@@ -1,6 +1,8 @@
 import { DataSource, DataSourceOptions } from 'typeorm';
 import * as dotenv from 'dotenv';
 import { CreateInitialSchema1710752400000 } from './migrations/1710752400000-CreateInitialSchema';
+import { CreateRefreshTokenTable1750872580126 } from './migrations/1750872580126-CreateRefreshTokenSchema';
+import { RefreshTokenSubscriber } from '@modules/auth/subscribers/refresh-token.subscriber';
 
 // Load environment variables
 dotenv.config();
@@ -13,7 +15,7 @@ export const dataSourceOptions: DataSourceOptions = {
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_DATABASE || 'taskflow',
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
-  migrations: [CreateInitialSchema1710752400000],
+  migrations: [CreateInitialSchema1710752400000, CreateRefreshTokenTable1750872580126],
   migrationsTableName: 'migrations',
   synchronize: false, // Important: Set to false for production
   logging: process.env.NODE_ENV === 'development',
