@@ -1,7 +1,8 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { ConfigService } from '@nestjs/config';
+import { JwtPayload } from '../../../types/jwt-payload.interface';
 import { UsersService } from '../../users/users.service';
 
 @Injectable()
@@ -17,13 +18,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: any) {
-    const user = await this.usersService.findOne(payload.sub);
-    
+  async validate(payload: JwtPayload): Promise<JwtPayload> {
+    const user = await this.usersService.findByEmail(payload.email);
+
     if (!user) {
-      throw new UnauthorizedException('User not found');
+      throw new UnauthorizedException('User not found with this email.');
     }
-    
+
     return {
       id: user.id,
       email: user.email,
@@ -31,4 +32,4 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: user.role,
     };
   }
-} 
+}
