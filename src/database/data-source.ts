@@ -11,7 +11,7 @@ export const dataSourceOptions: DataSourceOptions = {
   port: parseInt(process.env.DB_PORT || '5432', 10),
   username: process.env.DB_USERNAME || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
-  database: process.env.DB_DATABASE || 'taskflow',
+  database: process.env.DB_DATABASE || 'task_manager',
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   migrations: [CreateInitialSchema1710752400000],
   migrationsTableName: 'migrations',
