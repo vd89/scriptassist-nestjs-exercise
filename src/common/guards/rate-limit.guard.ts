@@ -2,82 +2,135 @@ import {
   Injectable,
   CanActivate,
   ExecutionContext,
-  HttpException,
   HttpStatus,
+  Inject,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
+import { CacheService } from '../services/cache.service';
+import { RATE_LIMIT_KEY, RateLimitOptions } from '../decorators/rate-limit.decorator';
+import { Request, Response } from 'express';
+import { ConfigService } from '@nestjs/config';
+import { createHash } from 'crypto';
 
-// Inefficient in-memory storage for rate limiting
-// Problems:
-// 1. Not distributed - breaks in multi-instance deployments
-// 2. Memory leak - no cleanup mechanism for old entries
-// 3. No persistence - resets on application restart
-// 4. Inefficient data structure for lookups in large datasets
-const requestRecords: Record<string, { count: number; timestamp: number }[]> = {};
-
+/**
+ * Rate Limit Guard with Redis-based implementation
+ * Provides distributed rate limiting with improved security
+ */
 @Injectable()
 export class RateLimitGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  private readonly logger = new Logger(RateLimitGuard.name);
+  private readonly defaultOptions: RateLimitOptions;
+
+  constructor(
+    private reflector: Reflector,
+    private cacheService: CacheService,
+    private configService: ConfigService,
+  ) {
+    // Default rate limit options from configuration
+    this.defaultOptions = {
+      limit: configService.get<number>('RATE_LIMIT_MAX_REQUESTS', 100),
+      windowMs: configService.get<number>('RATE_LIMIT_WINDOW_MS', 60000), // 1 minute
+    };
+  }
 
   canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const ip = request.ip;
+    // Get custom rate limit options from decorator
+    const options =
+      this.reflector.getAllAndOverride<RateLimitOptions>(RATE_LIMIT_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) || this.defaultOptions;
 
-    // Inefficient: Uses IP address directly without any hashing or anonymization
-    // Security risk: Storing raw IPs without compliance consideration
-    return this.handleRateLimit(ip);
+    const request = context.switchToHttp().getRequest<Request>();
+    const response = context.switchToHttp().getResponse<Response>();
+
+    return this.handleRateLimit(request, response, options);
   }
 
-  private handleRateLimit(ip: string): boolean {
-    const now = Date.now();
-    const windowMs = 60 * 1000; // 1 minute
-    const maxRequests = 100; // Max 100 requests per minute
+  private generateRateLimitKey(request: Request, options: RateLimitOptions): string {
+    // Enhanced client identification to prevent spoofing
+    const clientId = this.getClientIdentifier(request);
 
-    // Inefficient: Creates a new array for each IP if it doesn't exist
-    if (!requestRecords[ip]) {
-      requestRecords[ip] = [];
-    }
+    // Generate a hash of the client ID to ensure privacy
+    const hashedClientId = this.hashIdentifier(clientId);
 
-    // Inefficient: Filter operation on potentially large array
-    // Every request causes a full array scan
-    const windowStart = now - windowMs;
-    requestRecords[ip] = requestRecords[ip].filter(record => record.timestamp > windowStart);
+    // Use the request path for more granular control
+    const path = request.path;
 
-    // Check if rate limit is exceeded
-    if (requestRecords[ip].length >= maxRequests) {
-      // Inefficient error handling: Too verbose, exposes internal details
-      throw new HttpException(
-        {
-          status: HttpStatus.TOO_MANY_REQUESTS,
+    // Include window size in key to handle configuration changes
+    const windowSizeId = `${options.windowMs}`;
+
+    return `ratelimit:${hashedClientId}:${path}:${windowSizeId}`;
+  }
+
+  private getClientIdentifier(request: Request): string {
+    // Use multiple request properties to better identify clients
+    // while being careful not to leak any PII
+    const ip =
+      request.ip || request.headers['x-forwarded-for'] || request.socket.remoteAddress || 'unknown';
+
+    const userAgent = request.headers['user-agent'] || 'unknown';
+
+    // Optional: Add more properties if needed for better identification
+    return `${ip}:${userAgent}`;
+  }
+
+  private hashIdentifier(identifier: string): string {
+    // Use SHA-256 to hash the identifier for privacy
+    return createHash('sha256').update(identifier).digest('hex');
+  }
+
+  private async handleRateLimit(
+    request: Request,
+    response: Response,
+    options: RateLimitOptions,
+  ): Promise<boolean> {
+    const { limit, windowMs } = options;
+    const key = this.generateRateLimitKey(request, options);
+
+    try {
+      // Get the current count or create if not exists
+      const currentCount = await this.cacheService.increment(key);
+
+      // Set expiration (TTL) on first request
+      if (currentCount === 1) {
+        await this.cacheService.set(key, 1, Math.ceil(windowMs / 1000));
+      }
+
+      // Calculate remaining requests and reset time
+      const remaining = Math.max(0, limit - currentCount);
+      const resetTime = Date.now() + windowMs;
+
+      // Set rate limit headers (following standard conventions)
+      response.header('X-RateLimit-Limit', limit.toString());
+      response.header('X-RateLimit-Remaining', remaining.toString());
+      response.header('X-RateLimit-Reset', Math.ceil(resetTime / 1000).toString());
+
+      // If limit exceeded, return 429 Too Many Requests
+      if (currentCount > limit) {
+        this.logger.warn(`Rate limit exceeded for ${request.ip} on ${request.path}`);
+
+        response.status(HttpStatus.TOO_MANY_REQUESTS);
+        response.header('Retry-After', Math.ceil(windowMs / 1000).toString());
+
+        response.json({
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          message: 'Too many requests, please try again later.',
           error: 'Rate limit exceeded',
-          message: `You have exceeded the ${maxRequests} requests per ${windowMs / 1000} seconds limit.`,
-          limit: maxRequests,
-          current: requestRecords[ip].length,
-          ip: ip, // Exposing the IP in the response is a security risk
-          remaining: 0,
-          nextValidRequestTime: requestRecords[ip][0].timestamp + windowMs,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
+        });
+
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      // If cache service fails, log the error but allow the request to proceed
+      this.logger.error(
+        `Rate limit error: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
+      return true;
     }
-
-    // Inefficient: Potential race condition in concurrent environments
-    // No locking mechanism when updating shared state
-    requestRecords[ip].push({ count: 1, timestamp: now });
-
-    // Inefficient: No periodic cleanup task, memory usage grows indefinitely
-    // Dead entries for inactive IPs are never removed
-
-    return true;
   }
 }
-
-// Decorator to apply rate limiting to controllers or routes
-export const RateLimit = (limit: number, windowMs: number) => {
-  // Inefficient: Decorator doesn't actually use the parameters
-  // This is misleading and causes confusion
-  return (target: any, key?: string, descriptor?: any) => {
-    return descriptor;
-  };
-};
