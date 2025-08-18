@@ -12,7 +12,6 @@ import { PaginatedResponse } from '../../types/pagination.interface';
 import { CacheService } from '../../common/services/cache.service';
 import { ServiceError } from '../../types/http-response.interface';
 
-
 @Injectable()
 export class TasksService {
   private readonly logger = new Logger(TasksService.name);
@@ -29,7 +28,7 @@ export class TasksService {
   /**
    * Create a new task with proper transaction handling
    */
-  async create (createTaskDto: CreateTaskDto): Promise<Task> {
+  async create(createTaskDto: CreateTaskDto): Promise<Task> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -63,10 +62,7 @@ export class TasksService {
       // Rollback transaction on error
       await queryRunner.rollbackTransaction();
       const serviceError = error as ServiceError;
-      this.logger.error(
-        `Failed to create task: ${serviceError.message}`,
-        serviceError.stack,
-      );
+      this.logger.error(`Failed to create task: ${serviceError.message}`, serviceError.stack);
       throw error;
     } finally {
       // Release query runner
@@ -290,10 +286,7 @@ export class TasksService {
       // Rollback transaction on error
       await queryRunner.rollbackTransaction();
       const serviceError = error as ServiceError;
-      this.logger.error(
-        `Failed to update task ${id}: ${serviceError.message}`,
-        serviceError.stack,
-      );
+      this.logger.error(`Failed to update task ${id}: ${serviceError.message}`, serviceError.stack);
       throw error;
     } finally {
       // Release query runner
@@ -332,10 +325,7 @@ export class TasksService {
       // Rollback transaction on error
       await queryRunner.rollbackTransaction();
       const serviceError = error as ServiceError;
-      this.logger.error(
-        `Failed to delete task ${id}: ${serviceError.message}`,
-        serviceError.stack,
-      );
+      this.logger.error(`Failed to delete task ${id}: ${serviceError.message}`, serviceError.stack);
       throw error;
     } finally {
       // Release query runner
@@ -422,7 +412,7 @@ export class TasksService {
   /**
    * Batch process multiple tasks efficiently
    */
-  async batchProcess (taskIds: string[], action: string): Promise<any[]> {
+  async batchProcess(taskIds: string[], action: string): Promise<any[]> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -516,10 +506,7 @@ export class TasksService {
       // Rollback transaction on error
       await queryRunner.rollbackTransaction();
       const serviceError = error as ServiceError;
-      this.logger.error(
-        `Batch process failed: ${serviceError.message}`,
-        serviceError.stack,
-      );
+      this.logger.error(`Batch process failed: ${serviceError.message}`, serviceError.stack);
       throw error;
     } finally {
       // Release query runner

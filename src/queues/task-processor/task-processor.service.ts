@@ -4,7 +4,6 @@ import { Job, Queue } from 'bullmq';
 import { TasksService } from '../../modules/tasks/tasks.service';
 import { ConfigService } from '@nestjs/config';
 
-
 interface TaskResult {
   success: boolean;
   taskId?: string;
@@ -37,7 +36,7 @@ export class TaskProcessorService extends WorkerHost {
   /**
    * Process jobs with proper error handling and batching
    */
-  async process (job: Job): Promise<TaskResult | BatchResult> {
+  async process(job: Job): Promise<TaskResult | BatchResult> {
     this.logger.debug(
       `Processing job ${job.id} of type ${job.name} [attempt: ${job.attemptsMade + 1}]`,
     );
@@ -60,16 +59,12 @@ export class TaskProcessorService extends WorkerHost {
     } catch (error) {
       // Enhanced error logging with context
       const err = error as Error;
-      this.logger.error(
-        `Error processing job ${job.id} (${job.name}): ${err.message}`,
-        err.stack,
-        {
-          jobId: job.id,
-          jobName: job.name,
-          jobData: job.data,
-          attempt: job.attemptsMade + 1,
-        },
-      );
+      this.logger.error(`Error processing job ${job.id} (${job.name}): ${err.message}`, err.stack, {
+        jobId: job.id,
+        jobName: job.name,
+        jobData: job.data,
+        attempt: job.attemptsMade + 1,
+      });
 
       // Determine if we should retry based on error type
       const shouldRetry = this.shouldRetryJob(err, job);
@@ -91,7 +86,7 @@ export class TaskProcessorService extends WorkerHost {
   /**
    * Handle task status update jobs
    */
-  private async handleStatusUpdate (job: Job): Promise<TaskResult> {
+  private async handleStatusUpdate(job: Job): Promise<TaskResult> {
     const { taskId, status } = job.data;
 
     if (!taskId || !status) {
@@ -117,7 +112,7 @@ export class TaskProcessorService extends WorkerHost {
   /**
    * Handle overdue tasks notification
    */
-  private async handleOverdueTasks (job: Job): Promise<BatchResult> {
+  private async handleOverdueTasks(job: Job): Promise<BatchResult> {
     this.logger.debug('Processing overdue tasks notification');
 
     // Handle batches for large datasets
@@ -159,7 +154,7 @@ export class TaskProcessorService extends WorkerHost {
   /**
    * Handle batch processing of tasks
    */
-  private async handleBatchProcess (job: Job): Promise<BatchResult> {
+  private async handleBatchProcess(job: Job): Promise<BatchResult> {
     const { taskIds, action } = job.data;
 
     if (!taskIds || !Array.isArray(taskIds) || taskIds.length === 0) {

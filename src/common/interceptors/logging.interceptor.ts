@@ -36,9 +36,9 @@ export class LoggingInterceptor implements NestInterceptor {
 
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
-    const requestId = Array.isArray(request.headers[ 'x-request-id' ])
-      ? request.headers[ 'x-request-id' ][ 0 ]
-      : request.headers[ 'x-request-id' ];
+    const requestId = Array.isArray(request.headers['x-request-id'])
+      ? request.headers['x-request-id'][0]
+      : request.headers['x-request-id'];
     const method = request.method;
     const url = request.url;
     const ip = request.ip;
