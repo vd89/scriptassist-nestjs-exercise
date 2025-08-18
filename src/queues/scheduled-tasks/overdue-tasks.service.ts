@@ -77,8 +77,10 @@ export class OverdueTasksService {
       }
 
       this.logger.log(`Queued ${totalBatches} batches for processing overdue tasks`);
-    } catch (error) {
-      this.logger.error(`Error checking overdue tasks: ${error.message}`, error.stack);
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        this.logger.error(`Error checking overdue tasks: ${error.message}`, error.stack);
+      }
     }
   }
 

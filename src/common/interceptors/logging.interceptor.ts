@@ -1,15 +1,11 @@
 import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Logger } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap, finalize } from 'rxjs/operators';
-import { Request, Response } from 'express';
+import { Request as ExpressRequest, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 
-declare global {
-  namespace Express {
-    interface Request {
-      requestId?: string;
-    }
-  }
+interface Request extends ExpressRequest {
+  requestId?: string;
 }
 
 /**
@@ -40,20 +36,28 @@ export class LoggingInterceptor implements NestInterceptor {
 
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
-    const { method, url, ip } = request;
-    const requestId = this.generateRequestId();
+    const requestId = Array.isArray(request.headers[ 'x-request-id' ])
+      ? request.headers[ 'x-request-id' ][ 0 ]
+      : request.headers[ 'x-request-id' ];
+    const method = request.method;
+    const url = request.url;
+    const ip = request.ip;
+
+    // Fix: Ensure requestId is always a string
+    this.logRequest(requestId || 'no-request-id', method, url, ip, request);
 
     // Attach request ID to the request object for potential use in handlers
     request['requestId'] = requestId;
 
     // Attach request ID to response headers
-    response.setHeader('X-Request-ID', requestId);
+    const finalRequestId = requestId || this.generateRequestId();
+    response.setHeader('X-Request-ID', finalRequestId);
 
     // Get current timestamp for measuring duration
     const startTime = Date.now();
 
     // Log the incoming request
-    this.logRequest(requestId, method, url, ip, request);
+    this.logRequest(requestId || 'no-request-id', method, url, ip, request);
 
     return next.handle().pipe(
       // Log successful responses
@@ -84,14 +88,13 @@ export class LoggingInterceptor implements NestInterceptor {
   }
 
   private logRequest(
-    requestId: string,
+    requestId: string | undefined,
     method: string,
     url: string,
-    ip: string,
+    ip: string | undefined, // Update this to allow undefined
     request: Request,
   ): void {
     // Extract user ID if available from token
-    const userId = request.user?.id || 'anonymous';
 
     // Get safe headers (remove sensitive ones)
     const safeHeaders = this.getSafeHeaders(request.headers);
@@ -102,12 +105,11 @@ export class LoggingInterceptor implements NestInterceptor {
     // Get request body (sanitized)
     const body = this.sanitizeObject(request.body);
 
-    this.logger.log(`[${requestId}] ${method} ${url} - Request from ${ip} by user ${userId}`, {
+    this.logger.log(`[${requestId}] ${method} ${url} - Request from ${ip} `, {
       requestId,
       method,
       url,
       ip,
-      userId,
       headers: safeHeaders,
       query: queryParams,
       body,

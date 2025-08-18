@@ -4,3 +4,8 @@ export interface HttpResponse<T> {
   message?: string;
   error?: string;
 }
+
+export interface ServiceError extends Error {
+  message: string;
+  stack?: string;
+}

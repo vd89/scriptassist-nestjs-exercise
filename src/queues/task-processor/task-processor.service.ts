@@ -1,19 +1,33 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq'; // Remove OnWorkerEvent
+import { Job, Queue } from 'bullmq';
 import { TasksService } from '../../modules/tasks/tasks.service';
 import { ConfigService } from '@nestjs/config';
 
+
+interface TaskResult {
+  success: boolean;
+  taskId?: string;
+  message?: string;
+  error?: string;
+  newStatus?: string;
+  jobId?: string;
+}
+
+interface BatchResult {
+  success: boolean;
+  action?: string;
+  processedCount?: number;
+  results?: TaskResult[];
+}
+
 @Injectable()
-@Processor({
-  name: 'task-processing',
-  // Configure worker with sensible defaults
-  concurrency: 10, // Process up to 10 jobs concurrently
-})
-export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
+@Processor('task-processing')
+export class TaskProcessorService extends WorkerHost {
   private readonly logger = new Logger(TaskProcessorService.name);
 
   constructor(
+    @InjectQueue('task-processing') private taskQueue: Queue,
     private readonly tasksService: TasksService,
     private readonly configService: ConfigService,
   ) {
@@ -23,7 +37,7 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
   /**
    * Process jobs with proper error handling and batching
    */
-  async process(job: Job): Promise<any> {
+  async process (job: Job): Promise<TaskResult | BatchResult> {
     this.logger.debug(
       `Processing job ${job.id} of type ${job.name} [attempt: ${job.attemptsMade + 1}]`,
     );
@@ -45,9 +59,10 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
       }
     } catch (error) {
       // Enhanced error logging with context
+      const err = error as Error;
       this.logger.error(
-        `Error processing job ${job.id} (${job.name}): ${error.message}`,
-        error.stack,
+        `Error processing job ${job.id} (${job.name}): ${err.message}`,
+        err.stack,
         {
           jobId: job.id,
           jobName: job.name,
@@ -57,7 +72,7 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
       );
 
       // Determine if we should retry based on error type
-      const shouldRetry = this.shouldRetryJob(error, job);
+      const shouldRetry = this.shouldRetryJob(err, job);
 
       if (shouldRetry) {
         // Throw error to trigger retry
@@ -66,7 +81,7 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
         // Return error result to mark job as completed but failed
         return {
           success: false,
-          error: error.message,
+          error: err.message,
           jobId: job.id,
         };
       }
@@ -76,7 +91,7 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
   /**
    * Handle task status update jobs
    */
-  private async handleStatusUpdate(job: Job): Promise<any> {
+  private async handleStatusUpdate (job: Job): Promise<TaskResult> {
     const { taskId, status } = job.data;
 
     if (!taskId || !status) {
@@ -102,24 +117,22 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
   /**
    * Handle overdue tasks notification
    */
-  private async handleOverdueTasks(job: Job): Promise<any> {
+  private async handleOverdueTasks (job: Job): Promise<BatchResult> {
     this.logger.debug('Processing overdue tasks notification');
 
     // Handle batches for large datasets
     const { batchSize = 100, page = 1 } = job.data;
 
     try {
-      // Find overdue tasks (implement in TasksService)
+      // Find overdue tasks
       const tasks = await this.tasksService.findOverdueTasks(page, batchSize);
 
       this.logger.log(`Processing ${tasks.data.length} overdue tasks (batch ${page})`);
 
       // Process notifications or other actions for overdue tasks
-      // ...
-
-      // If there are more tasks to process, add a new job for the next batch
+      // Add to queue if there are more tasks
       if (tasks.meta.page < tasks.meta.totalPages) {
-        await job.queueEvents.add(
+        await this.taskQueue.add(
           'overdue-tasks-notification',
           {
             batchSize,
@@ -135,11 +148,10 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
       return {
         success: true,
         processedCount: tasks.data.length,
-        batchNumber: page,
-        totalBatches: tasks.meta.totalPages,
       };
     } catch (error) {
-      this.logger.error(`Error processing overdue tasks: ${error.message}`, error.stack);
+      const err = error as Error;
+      this.logger.error(`Error processing overdue tasks: ${err.message}`, err.stack);
       throw error;
     }
   }
@@ -147,7 +159,7 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
   /**
    * Handle batch processing of tasks
    */
-  private async handleBatchProcess(job: Job): Promise<any> {
+  private async handleBatchProcess (job: Job): Promise<BatchResult> {
     const { taskIds, action } = job.data;
 
     if (!taskIds || !Array.isArray(taskIds) || taskIds.length === 0) {
@@ -164,16 +176,16 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
       throw new Error(`Invalid action: ${action}. Must be one of: ${validActions.join(', ')}`);
     }
 
-    // Split large batches into smaller chunks for better performance
+    // Split large batches into smaller chunks
     const chunkSize = 100;
     const chunks = this.chunkArray(taskIds, chunkSize);
 
-    let results = [];
+    const results: TaskResult[] = [];
 
     for (const chunk of chunks) {
       // Process each chunk
       const chunkResults = await this.tasksService.batchProcess(chunk, action);
-      results = results.concat(chunkResults);
+      results.push(...chunkResults);
     }
 
     return {
@@ -188,7 +200,7 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
    * Helper method to split array into chunks
    */
   private chunkArray<T>(array: T[], size: number): T[][] {
-    const chunks = [];
+    const chunks: T[][] = [];
     for (let i = 0; i < array.length; i += size) {
       chunks.push(array.slice(i, i + size));
     }
@@ -220,34 +232,5 @@ export class TaskProcessorService extends WorkerHost implements OnWorkerEvent {
 
     // Default to retry for most errors
     return true;
-  }
-
-  /**
-   * Handle worker events
-   */
-  onWorkerEvent(event: string, args: any): void {
-    switch (event) {
-      case 'failed':
-        const { jobId, failedReason, attemptsMade } = args;
-        this.logger.error(`Job ${jobId} failed after ${attemptsMade} attempts: ${failedReason}`);
-        break;
-
-      case 'error':
-        const error = args;
-        this.logger.error(`Worker error: ${error.message}`, error.stack);
-        break;
-
-      case 'completed':
-        const { jobId: completedJobId, returnvalue } = args;
-        this.logger.debug(
-          `Job ${completedJobId} completed with result: ${JSON.stringify(returnvalue)}`,
-        );
-        break;
-
-      case 'stalled':
-        const { jobId: stalledJobId } = args;
-        this.logger.warn(`Job ${stalledJobId} stalled`);
-        break;
-    }
   }
 }
