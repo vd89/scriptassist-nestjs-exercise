@@ -20,7 +20,7 @@ import { TaskFilterDto } from './dto/task-filter.dto';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
-import { Task } from './entities/task.entity';
+import { Task } from '../../domain/entities/task.entity';
 import { PaginatedResponse } from '../../types/pagination.interface';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
@@ -134,7 +134,7 @@ export class TasksController {
       };
     }
 
-    const task = await this.tasksService.update(id, updateTaskDto);
+    const task = await this.tasksService.update(id, updateTaskDto, user.id);
 
     return {
       success: true,
@@ -162,7 +162,7 @@ export class TasksController {
       };
     }
 
-    await this.tasksService.remove(id);
+    await this.tasksService.remove(id, user.id);
   }
 
   @Post('batch')
@@ -202,7 +202,7 @@ export class TasksController {
       });
 
       // Create a set of accessible task IDs
-      const accessibleTaskIds = new Set(tasks.data.map(task => task.id));
+      const accessibleTaskIds = new Set<string>(tasks.data.map(task => String(task.id)));
 
       // Check if all requested task IDs are accessible
       const unauthorizedTaskIds = taskIds.filter(id => !accessibleTaskIds.has(id));
@@ -217,7 +217,7 @@ export class TasksController {
     }
 
     // Process tasks in batch
-    const results = await this.tasksService.batchProcess(taskIds, action);
+    const results = await this.tasksService.batchProcess(taskIds, action, user.id);
 
     return {
       success: true,

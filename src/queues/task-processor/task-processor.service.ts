@@ -99,12 +99,13 @@ export class TaskProcessorService extends WorkerHost {
       throw new Error(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
     }
 
-    // Update task status
-    const task = await this.tasksService.updateStatus(taskId, status);
+    // Update task status using system user for background tasks
+    const systemUserId = this.configService.get<string>('SYSTEM_USER_ID', 'system');
+    const task = await this.tasksService.updateStatus(taskId, status, systemUserId);
 
     return {
       success: true,
-      taskId: task.id,
+      taskId: task.id.toString(),
       newStatus: task.status,
     };
   }
@@ -178,8 +179,9 @@ export class TaskProcessorService extends WorkerHost {
     const results: TaskResult[] = [];
 
     for (const chunk of chunks) {
-      // Process each chunk
-      const chunkResults = await this.tasksService.batchProcess(chunk, action);
+      // Process each chunk using system user
+      const systemUserId = this.configService.get<string>('SYSTEM_USER_ID', 'system');
+      const chunkResults = await this.tasksService.batchProcess(chunk, action, systemUserId);
       results.push(...chunkResults);
     }
 

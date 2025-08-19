@@ -12,6 +12,8 @@ import { TasksModule } from './modules/tasks/tasks.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TaskProcessorModule } from './queues/task-processor/task-processor.module';
 import { ScheduledTasksModule } from './queues/scheduled-tasks/scheduled-tasks.module';
+import { InfrastructureModule } from './infrastructure/infrastructure.module';
+import { DomainModule } from './domain/domain.module';
 
 // Configuration
 import appConfig from './config/app.config';
@@ -51,7 +53,7 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard';
         username: configService.get('database.username'),
         password: configService.get('database.password'),
         database: configService.get('database.database'),
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        entities: [ __dirname + '/**/*.entity{.ts,.js}', __dirname + '/**/*.model{.ts,.js}' ],
         // Only enable synchronize in development
         synchronize: configService.get('database.synchronize'),
         // Only enable logging in development
@@ -110,6 +112,8 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard';
     }),
 
     // Feature modules
+    InfrastructureModule,
+    DomainModule,
     UsersModule,
     TasksModule,
     AuthModule,

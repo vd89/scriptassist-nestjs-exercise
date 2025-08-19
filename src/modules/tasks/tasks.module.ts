@@ -5,6 +5,8 @@ import { TasksService } from './tasks.service';
 import { TasksController } from './tasks.controller';
 import { Task } from './entities/task.entity';
 import { CacheService } from '../../common/services/cache.service';
+import { DomainModule } from '../../domain/domain.module';
+import { InfrastructureModule } from '../../infrastructure/infrastructure.module';
 import { ConfigModule } from '@nestjs/config';
 
 @Module({
@@ -14,6 +16,8 @@ import { ConfigModule } from '@nestjs/config';
       name: 'task-processing',
     }),
     ConfigModule, // Required for CacheService
+    DomainModule,
+    InfrastructureModule,
   ],
   controllers: [TasksController],
   providers: [

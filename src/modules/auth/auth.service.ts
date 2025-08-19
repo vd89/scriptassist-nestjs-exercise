@@ -3,15 +3,19 @@ import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { User } from '../users/entities/user.entity';
 import * as bcrypt from 'bcrypt';
+
+interface RoleObject {
+  value: string;
+}
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
-  ) {}
-
+  ) { }
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
@@ -21,24 +25,25 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email');
     }
 
-    const passwordValid = await bcrypt.compare(password, user.password);
+    const passwordValue = typeof user.password === 'object' ? user.password.value : user.password;
+    const passwordValid = await bcrypt.compare(password, passwordValue);
 
     if (!passwordValid) {
       throw new UnauthorizedException('Invalid password');
     }
 
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-    };
+    const userId = typeof user.id === 'object' ? user.id.value : user.id;
 
     return {
-      access_token: this.jwtService.sign(payload),
+      access_token: this.jwtService.sign({
+        sub: userId,
+        email: typeof user.email === 'object' ? user.email.value : user.email,
+        role: user.role && typeof user.role === 'object' && 'value' in (user.role as RoleObject) ? (user.role as RoleObject).value : user.role,
+      }),
       user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
+        id: userId,
+        email: typeof user.email === 'object' ? user.email.value : user.email,
+        role: user.role && typeof user.role === 'object' && 'value' in (user.role as RoleObject) ? (user.role as RoleObject).value : user.role,
       },
     };
   }
@@ -52,7 +57,7 @@ export class AuthService {
 
     const user = await this.usersService.create(registerDto);
 
-    const token = this.generateToken(user.id);
+    const token = this.generateToken(user.id.toString());
 
     return {
       user: {
