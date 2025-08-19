@@ -4,6 +4,7 @@ import { UserModel } from './persistence/entities/user.model';
 import { TaskModel } from './persistence/entities/task.model';
 import { TypeOrmUserRepository } from './persistence/repositories/typeorm-user.repository';
 import { TypeOrmTaskRepository } from './persistence/repositories/typeorm-task.repository';
+import { TypeOrmUnitOfWork, UNIT_OF_WORK } from './persistence/unit-of-work/typeorm-unit-of-work.service';
 
 import { USER_REPOSITORY, TASK_REPOSITORY } from '../domain/repositories/repository.tokens';
 
@@ -20,7 +21,11 @@ import { USER_REPOSITORY, TASK_REPOSITORY } from '../domain/repositories/reposit
       provide: TASK_REPOSITORY,
       useClass: TypeOrmTaskRepository,
     },
+    {
+      provide: UNIT_OF_WORK,
+      useClass: TypeOrmUnitOfWork,
+    },
   ],
-  exports: [USER_REPOSITORY, TASK_REPOSITORY],
+  exports: [USER_REPOSITORY, TASK_REPOSITORY, UNIT_OF_WORK],
 })
 export class InfrastructureModule {}

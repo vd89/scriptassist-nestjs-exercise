@@ -1,5 +1,6 @@
 import { Task, TaskStatus, TaskPriority } from '../entities/task.entity';
 import { EntityId } from '../value-objects/entity-id.value-object';
+import { BaseRepository, SpecificationRepository } from './base.repository.interface';
 
 export interface TaskFilters {
   status?: TaskStatus;
@@ -29,15 +30,13 @@ export interface PaginatedResult<T> {
   };
 }
 
-export interface TaskRepository {
-  findById(id: EntityId): Promise<Task | null>;
-  save(task: Task): Promise<Task>;
-  delete(id: EntityId): Promise<void>;
+export interface TaskRepository extends BaseRepository<Task>, SpecificationRepository<Task> {
+  // Base methods inherited from BaseRepository and SpecificationRepository
   findAll(filters?: TaskFilters, pagination?: PaginationOptions): Promise<PaginatedResult<Task>>;
   findByUserId(userId: EntityId): Promise<Task[]>;
   findByStatus(status: TaskStatus): Promise<Task[]>;
   findOverdueTasks(pagination?: PaginationOptions): Promise<PaginatedResult<Task>>;
-  exists(id: EntityId): Promise<boolean>;
+  // exists method inherited from BaseRepository
   countByUserId(userId: EntityId): Promise<number>;
   countByStatus(status: TaskStatus): Promise<number>;
 }

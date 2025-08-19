@@ -14,6 +14,7 @@ import { TaskProcessorModule } from './queues/task-processor/task-processor.modu
 import { ScheduledTasksModule } from './queues/scheduled-tasks/scheduled-tasks.module';
 import { InfrastructureModule } from './infrastructure/infrastructure.module';
 import { DomainModule } from './domain/domain.module';
+import { ApplicationModule } from './application/application.module';
 
 // Configuration
 import appConfig from './config/app.config';
@@ -114,6 +115,7 @@ import { RateLimitGuard } from './common/guards/rate-limit.guard';
     // Feature modules
     InfrastructureModule,
     DomainModule,
+    ApplicationModule,
     UsersModule,
     TasksModule,
     AuthModule,

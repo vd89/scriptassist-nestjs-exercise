@@ -28,6 +28,12 @@ interface TaskProps {
 }
 
 export class Task extends AggregateRoot<TaskProps> {
+  markAsPending: jest.Mock<any, any, any>;
+  assignToUser: jest.Mock<any, any, any>;
+  canBeCompletedBy: jest.Mock<any, any, any>;
+  canBeModifiedBy: jest.Mock<any, any, any>;
+  toJSON: jest.Mock<any, any, any>;
+  clearDomainEvents: jest.Mock<any, any, any>;
   constructor(props: TaskProps, id?: EntityId) {
     super(props, id);
   }

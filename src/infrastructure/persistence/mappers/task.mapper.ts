@@ -1,6 +1,8 @@
 import { Task, TaskStatus, TaskPriority } from '../../../domain/entities/task.entity';
 import { TaskModel, TaskStatusModel, TaskPriorityModel } from '../entities/task.model';
 import { EntityId } from '../../../domain/value-objects/entity-id.value-object';
+import { CreateTaskDto } from '@modules/tasks/dto/create-task.dto';
+import { UpdateTaskDto } from '@modules/tasks/dto/update-task.dto';
 
 export class TaskMapper {
   static toDomain(taskModel: TaskModel): Task {
@@ -19,17 +21,31 @@ export class TaskMapper {
     );
   }
 
-  static toPersistence(task: Task): TaskModel {
+  static toPersistence (input: Task | CreateTaskDto | UpdateTaskDto): TaskModel {
     const taskModel = new TaskModel();
-    taskModel.id = task.id.value;
-    taskModel.title = task.title.value;
-    taskModel.description = task.description.value ?? '';
-    taskModel.status = task.status as unknown as TaskStatusModel;
-    taskModel.priority = task.priority as unknown as TaskPriorityModel;
-    taskModel.dueDate = task.dueDate.value ?? new Date();
-    taskModel.userId = task.userId.value;
-    taskModel.createdAt = task.createdAt;
-    taskModel.updatedAt = task.updatedAt;
+
+    if (input instanceof Task) {
+      taskModel.id = input.id.value;
+      taskModel.title = input.title.value;
+      taskModel.description = input.description.value ?? '';
+      taskModel.status = input.status as unknown as TaskStatusModel;
+      taskModel.priority = input.priority as unknown as TaskPriorityModel;
+      taskModel.dueDate = input.dueDate.value ?? new Date();
+      taskModel.userId = input.userId.value;
+      taskModel.createdAt = input.createdAt;
+      taskModel.updatedAt = input.updatedAt;
+    } else {
+      if ('id' in input) taskModel.id = String(input.id);
+      taskModel.title = input.title ?? '';
+      taskModel.description = input.description ?? '';
+      taskModel.status = input.status as unknown as TaskStatusModel;
+      taskModel.priority = input.priority as unknown as TaskPriorityModel;
+      taskModel.dueDate = input.dueDate ?? new Date();
+      taskModel.userId = input.userId ?? 'default-user-id';
+      taskModel.createdAt = new Date();
+      taskModel.updatedAt = new Date();
+    }
+
     return taskModel;
   }
 

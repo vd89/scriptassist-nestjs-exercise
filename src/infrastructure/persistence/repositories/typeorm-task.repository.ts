@@ -7,10 +7,13 @@ import {
   PaginationOptions,
   PaginatedResult
 } from '../../../domain/repositories/task.repository.interface';
+import { Specification } from '../../../domain/repositories/base.repository.interface';
 import { Task, TaskStatus } from '../../../domain/entities/task.entity';
 import { TaskModel, TaskStatusModel } from '../entities/task.model';
 import { TaskMapper } from '../mappers/task.mapper';
 import { EntityId } from '../../../domain/value-objects/entity-id.value-object';
+import { CreateTaskDto } from '@modules/tasks/dto/create-task.dto';
+import { UpdateTaskDto } from '@modules/tasks/dto/update-task.dto';
 
 @Injectable()
 export class TypeOrmTaskRepository implements TaskRepository {
@@ -28,7 +31,7 @@ export class TypeOrmTaskRepository implements TaskRepository {
     return taskModel ? TaskMapper.toDomain(taskModel) : null;
   }
 
-  async save(task: Task): Promise<Task> {
+  async save (task: Task | CreateTaskDto | UpdateTaskDto): Promise<Task> {
     const taskModel = TaskMapper.toPersistence(task);
     const savedTaskModel = await this.taskRepository.save(taskModel);
     return TaskMapper.toDomain(savedTaskModel);
@@ -141,6 +144,40 @@ export class TypeOrmTaskRepository implements TaskRepository {
     });
   }
 
+  // Specification pattern implementations
+  async findBySpecification (spec: Specification<Task>): Promise<Task[]> {
+    const query = spec.toQuery();
+    const queryBuilder = this.taskRepository
+      .createQueryBuilder('task')
+      .leftJoinAndSelect('task.user', 'user');
+
+    this.applySpecificationQuery(queryBuilder, query);
+
+    const taskModels = await queryBuilder.getMany();
+    return taskModels.map(TaskMapper.toDomain);
+  }
+
+  async findOneBySpecification (spec: Specification<Task>): Promise<Task | null> {
+    const query = spec.toQuery();
+    const queryBuilder = this.taskRepository
+      .createQueryBuilder('task')
+      .leftJoinAndSelect('task.user', 'user');
+
+    this.applySpecificationQuery(queryBuilder, query);
+
+    const taskModel = await queryBuilder.getOne();
+    return taskModel ? TaskMapper.toDomain(taskModel) : null;
+  }
+
+  async countBySpecification (spec: Specification<Task>): Promise<number> {
+    const query = spec.toQuery();
+    const queryBuilder = this.taskRepository.createQueryBuilder('task');
+
+    this.applySpecificationQuery(queryBuilder, query);
+
+    return await queryBuilder.getCount();
+  }
+
   private applyFilters(
     queryBuilder: SelectQueryBuilder<TaskModel>,
     filters?: TaskFilters
@@ -207,5 +244,82 @@ export class TypeOrmTaskRepository implements TaskRepository {
       .orderBy(`task.${actualSortField}`, sortOrder)
       .skip(offset)
       .take(limit);
+  }
+
+  private applySpecificationQuery (
+    queryBuilder: SelectQueryBuilder<TaskModel>,
+    query: any
+  ): void {
+    // Handle MongoDB-style query objects for specifications
+    if (query.$and) {
+      query.$and.forEach((condition: any, index: number) => {
+        this.applyCondition(queryBuilder, condition, `and_${index}`);
+      });
+    } else if (query.$or) {
+      const orConditions = query.$or.map((condition: any, index: number) => {
+        return this.buildConditionString(condition, `or_${index}`);
+      }).join(' OR ');
+      queryBuilder.andWhere(`(${orConditions})`, this.buildConditionParams(query.$or));
+    } else {
+      this.applyCondition(queryBuilder, query, 'main');
+    }
+  }
+
+  private applyCondition (
+    queryBuilder: SelectQueryBuilder<TaskModel>,
+    condition: any,
+    paramPrefix: string
+  ): void {
+    Object.keys(condition).forEach(key => {
+      const value = condition[ key ];
+      const paramKey = `${paramPrefix}_${key}`;
+
+      if (typeof value === 'object' && value !== null) {
+        if (value.$lt) {
+          queryBuilder.andWhere(`task.${key} < :${paramKey}`, { [ paramKey ]: value.$lt });
+        } else if (value.$gt) {
+          queryBuilder.andWhere(`task.${key} > :${paramKey}`, { [ paramKey ]: value.$gt });
+        } else if (value.$ne) {
+          queryBuilder.andWhere(`task.${key} != :${paramKey}`, { [ paramKey ]: value.$ne });
+        }
+      } else {
+        queryBuilder.andWhere(`task.${key} = :${paramKey}`, { [ paramKey ]: value });
+      }
+    });
+  }
+
+  private buildConditionString (condition: any, paramPrefix: string): string {
+    return Object.keys(condition)
+      .map(key => {
+        const value = condition[ key ];
+        const paramKey = `${paramPrefix}_${key}`;
+
+        if (typeof value === 'object' && value !== null) {
+          if (value.$lt) return `task.${key} < :${paramKey}`;
+          if (value.$gt) return `task.${key} > :${paramKey}`;
+          if (value.$ne) return `task.${key} != :${paramKey}`;
+        }
+        return `task.${key} = :${paramKey}`;
+      })
+      .join(' AND ');
+  }
+
+  private buildConditionParams (conditions: any[]): any {
+    const params: any = {};
+    conditions.forEach((condition, index) => {
+      Object.keys(condition).forEach(key => {
+        const value = condition[ key ];
+        const paramKey = `or_${index}_${key}`;
+
+        if (typeof value === 'object' && value !== null) {
+          if (value.$lt) params[ paramKey ] = value.$lt;
+          else if (value.$gt) params[ paramKey ] = value.$gt;
+          else if (value.$ne) params[ paramKey ] = value.$ne;
+        } else {
+          params[ paramKey ] = value;
+        }
+      });
+    });
+    return params;
   }
 }

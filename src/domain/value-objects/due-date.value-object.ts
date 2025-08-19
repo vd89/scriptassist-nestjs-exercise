@@ -1,6 +1,6 @@
 import { ValueObject } from './value-object.base';
 
-interface DueDateProps {
+export interface DueDateProps {
   value: Date | null;
 }
 
@@ -31,7 +31,7 @@ export class DueDate extends ValueObject<DueDateProps> {
 
   static createWithValidation(date: Date | string | null): DueDate {
     const dueDate = DueDate.create(date);
-    
+
     if (dueDate.value && dueDate.isPast()) {
       throw new Error('Due date cannot be in the past');
     }
@@ -53,7 +53,7 @@ export class DueDate extends ValueObject<DueDateProps> {
     if (!this.props.value) return false;
     const today = new Date();
     const dueDate = this.props.value;
-    
+
     return (
       dueDate.getFullYear() === today.getFullYear() &&
       dueDate.getMonth() === today.getMonth() &&

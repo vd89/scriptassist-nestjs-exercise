@@ -3,10 +3,12 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
 import { TasksService } from './tasks.service';
 import { TasksController } from './tasks.controller';
+import { TaskCQRSController } from './task-cqrs.controller';
 import { Task } from './entities/task.entity';
 import { CacheService } from '../../common/services/cache.service';
 import { DomainModule } from '../../domain/domain.module';
 import { InfrastructureModule } from '../../infrastructure/infrastructure.module';
+import { ApplicationModule } from '../../application/application.module';
 import { ConfigModule } from '@nestjs/config';
 
 @Module({
@@ -18,8 +20,9 @@ import { ConfigModule } from '@nestjs/config';
     ConfigModule, // Required for CacheService
     DomainModule,
     InfrastructureModule,
+    ApplicationModule,
   ],
-  controllers: [TasksController],
+  controllers: [TasksController, TaskCQRSController],
   providers: [
     TasksService,
     CacheService, // Add CacheService as a provider
